@@ -1,0 +1,122 @@
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+from datetime import datetime, timedelta
+
+# --- CONFIGURATION ---
+st.set_page_config(page_title="My Market Dashboard", layout="wide")
+
+st.title("📊 Dividend & Growth Dashboard")
+st.markdown("Consolidated view of **Total Return** and **Dividend CAGR** similar to premium tools.")
+
+# --- SIDEBAR INPUT ---
+default_tickers = "SMH, MSFT, VYM, SCHD, VOO, QQQ"
+tickers_input = st.sidebar.text_area("Enter Tickers (comma separated)", value=default_tickers, height=150)
+tickers_list = [x.strip().upper() for x in tickers_input.split(',')]
+
+# --- FUNCTIONS ---
+
+def get_cagr(end_value, start_value, years):
+    """Calculate Compound Annual Growth Rate."""
+    if start_value == 0 or pd.isna(start_value) or pd.isna(end_value):
+        return None
+    return (end_value / start_value) ** (1 / years) - 1
+
+def get_data(ticker):
+    """Fetches data and calculates metrics for a single ticker."""
+    stock = yf.Ticker(ticker)
+    
+    # 1. Get Historical Price Data (Max duration needed is 15Y)
+    # We use 'auto_adjust=True' so 'Close' price accounts for dividends/splits (Total Return)
+    hist = stock.history(period="20y", auto_adjust=True)
+    
+    # 2. Get Dividend History for CAGR
+    # We need raw dividends, not adjusted prices
+    div_hist = stock.dividends
+    
+    if hist.empty:
+        return None
+
+    current_price = hist['Close'].iloc[-1]
+    current_date = hist.index[-1]
+    
+    metrics = {'Ticker': ticker, 'Current Price': current_price}
+    
+    # --- TOTAL RETURN CALCULATION (Using Adjusted Close) ---
+    timeframes = [1, 3, 5, 10, 15]
+    
+    for year in timeframes:
+        target_date = current_date - timedelta(days=year*365)
+        # Find nearest date in history
+        idx = hist.index.get_indexer([target_date], method='nearest')[0]
+        start_price = hist['Close'].iloc[idx]
+        
+        # Check if the start date is actually close to target (ticker might be too young)
+        actual_date = hist.index[idx]
+        if abs((actual_date - target_date).days) > 30:
+            metrics[f'{year}Y Return'] = None # Ticker too young
+        else:
+            total_return = (current_price - start_price) / start_price
+            metrics[f'{year}Y Return'] = total_return
+
+    # --- DIVIDEND CAGR CALCULATION ---
+    # Resample dividends to annual sums
+    if not div_hist.empty:
+        annual_divs = div_hist.resample('Y').sum()
+        current_year = datetime.now().year
+        last_full_year = current_year - 1
+        
+        # Get dividends for specific years
+        try:
+            div_now = annual_divs[annual_divs.index.year == last_full_year].iloc[0]
+        except IndexError:
+            div_now = 0
+            
+        metrics['Yield (TTM)'] = (div_now / current_price) if current_price else 0
+
+        div_timeframes = [3, 5, 10]
+        for year in div_timeframes:
+            target_year = last_full_year - year
+            try:
+                div_past = annual_divs[annual_divs.index.year == target_year].iloc[0]
+                metrics[f'{year}Y Div CAGR'] = get_cagr(div_now, div_past, year)
+            except IndexError:
+                metrics[f'{year}Y Div CAGR'] = None
+    else:
+        metrics['Yield (TTM)'] = 0
+        for year in [3, 5, 10]:
+            metrics[f'{year}Y Div CAGR'] = 0
+
+    return metrics
+
+# --- MAIN EXECUTION ---
+if st.button('Update Data'):
+    data = []
+    progress_bar = st.progress(0)
+    
+    for i, ticker in enumerate(tickers_list):
+        try:
+            res = get_data(ticker)
+            if res:
+                data.append(res)
+        except Exception as e:
+            st.error(f"Error fetching {ticker}: {e}")
+        progress_bar.progress((i + 1) / len(tickers_list))
+        
+    df = pd.DataFrame(data)
+    
+    # --- FORMATTING ---
+    # Convert floats to percentages for display
+    format_dict = {
+        'Current Price': '${:.2f}',
+        'Yield (TTM)': '{:.2%}',
+        '1Y Return': '{:.2%}', '3Y Return': '{:.2%}', '5Y Return': '{:.2%}', 
+        '10Y Return': '{:.2%}', '15Y Return': '{:.2%}',
+        '3Y Div CAGR': '{:.2%}', '5Y Div CAGR': '{:.2%}', '10Y Div CAGR': '{:.2%}'
+    }
+
+    st.subheader("Performance Matrix")
+    st.dataframe(df.style.format(format_dict, na_rep="N/A"), height=600)
+
+else:
+    st.info("Click 'Update Data' to fetch the latest metrics.")
