@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="Master Portfolio", layout="wide")
 st.title("📊 Master Portfolio: X-Ray, Dividends & Holdings")
 
-# --- BACKUP DATA BANK (Failsafe for when Yahoo blocks Cloud IPs) ---
+# --- BACKUP DATA BANK (Failsafe) ---
 BACKUP_HOLDINGS = {
     "SMH": [["NVDA", 0.20], ["TSM", 0.12], ["AVGO", 0.08], ["AMD", 0.05], ["ASML", 0.05], ["LRCX", 0.04], ["MU", 0.04], ["AMAT", 0.04], ["TXN", 0.04], ["INTC", 0.03]],
     "QQQ": [["AAPL", 0.08], ["MSFT", 0.08], ["NVDA", 0.07], ["AMZN", 0.05], ["META", 0.04], ["AVGO", 0.04], ["GOOGL", 0.03], ["GOOG", 0.03], ["TSLA", 0.02], ["COST", 0.02]],
@@ -16,7 +16,8 @@ BACKUP_HOLDINGS = {
     "SCHG": [["NVDA", 0.11], ["MSFT", 0.11], ["AAPL", 0.10], ["AMZN", 0.06], ["META", 0.04], ["GOOGL", 0.04], ["GOOG", 0.03], ["AVGO", 0.03], ["TSLA", 0.03], ["LLY", 0.02]],
     "FTEC": [["AAPL", 0.21], ["MSFT", 0.19], ["NVDA", 0.15], ["AVGO", 0.05], ["CRM", 0.02], ["ADBE", 0.02], ["ORCL", 0.02], ["AMD", 0.02], ["ACN", 0.02], ["CSCO", 0.01]],
     "VOO": [["MSFT", 0.07], ["AAPL", 0.06], ["NVDA", 0.06], ["AMZN", 0.03], ["META", 0.02], ["GOOGL", 0.02], ["GOOG", 0.01], ["AVGO", 0.01], ["LLY", 0.01], ["TSLA", 0.01]],
-    "SPY": [["MSFT", 0.07], ["AAPL", 0.06], ["NVDA", 0.06], ["AMZN", 0.03], ["META", 0.02], ["GOOGL", 0.02], ["GOOG", 0.01], ["AVGO", 0.01], ["LLY", 0.01], ["TSLA", 0.01]]
+    "SPY": [["MSFT", 0.07], ["AAPL", 0.06], ["NVDA", 0.06], ["AMZN", 0.03], ["META", 0.02], ["GOOGL", 0.02], ["GOOG", 0.01], ["AVGO", 0.01], ["LLY", 0.01], ["TSLA", 0.01]],
+    "VGT": [["AAPL", 0.16], ["MSFT", 0.16], ["NVDA", 0.13], ["AVGO", 0.04], ["CRM", 0.02], ["ACN", 0.02], ["ADBE", 0.02], ["AMD", 0.02], ["CSCO", 0.01], ["INTC", 0.01]]
 }
 
 # --- TABS ---
@@ -31,12 +32,9 @@ def merge_google(df, symbol_col='Symbol', weight_col='Weight'):
     df = df.sort_values(by=weight_col, ascending=False).reset_index(drop=True)
     return df
 
-# --- HELPER: GET HOLDINGS (With Backup) ---
+# --- HELPER: ROBUST HOLDINGS ---
 def get_holdings_robust(ticker):
-    """Tries Yahoo first, falls back to Backup if failed."""
     stock = yf.Ticker(ticker)
-    
-    # 1. Try Live Yahoo Data
     try:
         df = stock.funds_data.top_holdings
         if not df.empty:
@@ -45,15 +43,12 @@ def get_holdings_robust(ticker):
             df = df.iloc[:, [0, -1]]
             df.columns = ['Symbol', 'Raw_Weight']
             return df, "Live Data"
-    except:
-        pass
+    except: pass
 
-    # 2. Try Backup Dictionary
     if ticker in BACKUP_HOLDINGS:
         data = BACKUP_HOLDINGS[ticker]
         df = pd.DataFrame(data, columns=['Symbol', 'Raw_Weight'])
         return df, "Backup Data"
-
     return pd.DataFrame(), "Failed"
 
 # ==========================================
@@ -86,18 +81,16 @@ with tab1:
                 df['Portfolio_Weight'] = df['Raw_Weight'] * weights[ticker]
                 all_holdings.append(df)
                 if source == "Backup Data":
-                    status_text.append(f"⚠️ {ticker}: Used backup data (Yahoo blocked).")
+                    status_text.append(f"⚠️ {ticker}: Used backup data.")
             else:
                 status_text.append(f"❌ {ticker}: No data found.")
 
-        # Show status messages if any backups were used
         if status_text:
-            st.info(" | ".join(status_text))
+            st.caption(" | ".join(status_text))
 
         if all_holdings:
             full_df = pd.concat(all_holdings)
-            
-            # MERGE GOOG
+            # Merge GOOG
             full_df['Symbol'] = full_df['Symbol'].replace({'GOOG': 'GOOG/L', 'GOOGL': 'GOOG/L'})
             
             grouped = full_df.groupby('Symbol')['Portfolio_Weight'].sum().reset_index()
@@ -112,10 +105,10 @@ with tab1:
             with c2:
                 st.dataframe(grouped[['Symbol', 'Weight %']].head(20), height=500)
         else:
-            st.warning("Could not calculate holdings. Please check ticker spelling.")
+            st.warning("Could not calculate holdings. Check spelling.")
 
 # ==========================================
-# TAB 2: DIVIDEND DATA
+# TAB 2: DIVIDEND DATA (FIXED YIELD FWD)
 # ==========================================
 with tab2:
     def get_cagr(end, start, years):
@@ -152,18 +145,31 @@ with tab2:
         if hist.empty: return None
         price = hist['Close'].iloc[-1]
         
+        # --- 1. TTM Yield (The Accurate One) ---
         if not div_hist.empty:
             now = pd.Timestamp.now().tz_localize(div_hist.index.dtype.tz)
             ttm_divs = div_hist[div_hist.index >= (now - pd.Timedelta(days=365))].sum()
             yield_ttm = ttm_divs / price
         else: yield_ttm = 0
         
-        rate = info.get('dividendRate', 0)
-        if rate and rate > 0: 
-            yield_fwd = rate / price
+        # --- 2. Forward Yield (The Fix) ---
+        quote_type = info.get('quoteType', '').upper()
+        
+        # RULE: If it's an ETF, "Forward Yield" is usually garbage data from Yahoo.
+        # So we default ETF Forward Yield to be the same as TTM Yield.
+        if 'ETF' in quote_type:
+            yield_fwd = yield_ttm
         else:
-            raw = info.get('dividendYield', 0)
-            yield_fwd = raw / 100 if raw > 1 else raw
+            # If it's a COMPANY, calculate real forward yield
+            rate = info.get('dividendRate', 0)
+            if rate and rate > 0: 
+                yield_fwd = rate / price
+            else:
+                # Fallback Logic
+                raw = info.get('dividendYield', 0)
+                # If yahoo gives 0.05, that's 5%. If yahoo gives 5.0, that's 500% (wrong).
+                if raw > 0.25: yield_fwd = raw / 100
+                else: yield_fwd = raw
 
         ex_div = info.get('exDividendDate', None)
         ex_div = datetime.fromtimestamp(ex_div).strftime('%Y-%m-%d') if ex_div else "-"
@@ -248,20 +254,15 @@ with tab3:
             st.markdown(f"---")
             st.markdown(f"### 🔎 Analysis for **{target}**")
             
-            # Use Robust Getter
             df, source = get_holdings_robust(target)
             
             if not df.empty:
                 df.columns = ['Holding', 'Weight']
-                
-                # MERGE GOOG
                 df = merge_google(df, symbol_col='Holding', weight_col='Weight')
-                
-                # FORMAT
                 df['Weight'] = (df['Weight'] * 100).map('{:.2f}%'.format)
                 
                 if source == "Backup Data":
-                    st.caption(f"⚠️ Yahoo blocked the connection. Using cached backup data for {target}.")
+                    st.caption(f"⚠️ Yahoo blocked the connection. Using cached backup data.")
                 else:
                     st.caption(f"✅ Live data fetched from Yahoo Finance.")
                     
