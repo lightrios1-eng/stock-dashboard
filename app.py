@@ -148,10 +148,10 @@ with tab1:
         else: st.warning("Could not calculate holdings. Check spelling.")
 
 # ==========================================
-# TAB 2: DIVIDEND DATA (WITH AVERAGE ROW)
+# TAB 2: DIVIDEND DATA (WITH ANNUALIZED RETURN)
 # ==========================================
 with tab2:
-    def get_cagr(end, start, years):
+    def get_cagr_div(end, start, years):
         if start == 0 or pd.isna(start) or pd.isna(end): return None
         return (end / start) ** (1 / years) - 1
 
@@ -215,6 +215,7 @@ with tab2:
             'Ex-Div': ex_div, 'Payout': payout
         }
         
+        # --- CALCULATE RETURNS (TOTAL & CAGR) ---
         curr_date = hist.index[-1]
         for y in [1, 3, 5, 10, 15]:
             target = curr_date - timedelta(days=y*365)
@@ -222,9 +223,24 @@ with tab2:
             if len(idx_loc) > 0:
                 idx = idx_loc[0]
                 if abs((hist.index[idx] - target).days) < 100:
-                    metrics[f'{y}Y Return'] = (price - hist['Close'].iloc[idx]) / hist['Close'].iloc[idx]
-                else: metrics[f'{y}Y Return'] = None
-            else: metrics[f'{y}Y Return'] = None
+                    start_price = hist['Close'].iloc[idx]
+                    end_price = price
+                    
+                    # 1. Total Return
+                    total_ret = (end_price - start_price) / start_price
+                    metrics[f'{y}Y Total'] = total_ret
+                    
+                    # 2. Annualized Return (CAGR)
+                    # For 1 Year, CAGR is the same as Total Return.
+                    if y > 1:
+                        cagr = (end_price / start_price) ** (1 / y) - 1
+                        metrics[f'{y}Y CAGR'] = cagr
+                else: 
+                    metrics[f'{y}Y Total'] = None
+                    if y > 1: metrics[f'{y}Y CAGR'] = None
+            else: 
+                metrics[f'{y}Y Total'] = None
+                if y > 1: metrics[f'{y}Y CAGR'] = None
 
         if not div_hist.empty:
             annual = div_hist.resample('Y').sum()
@@ -235,7 +251,7 @@ with tab2:
                     target = last_year - y
                     try:
                         past_div = annual[annual.index.year == target].iloc[0]
-                        metrics[f'{y}Y Div CAGR'] = get_cagr(curr_div, past_div, y)
+                        metrics[f'{y}Y Div CAGR'] = get_cagr_div(curr_div, past_div, y)
                     except: metrics[f'{y}Y Div CAGR'] = None
             except: pass
         else:
@@ -257,20 +273,33 @@ with tab2:
             df = pd.DataFrame(data)
             
             # --- CALCULATE AVERAGE ROW ---
-            numeric_cols = ['Yield (TTM)', 'Yield (Fwd)', '1Y Return', '3Y Return', '5Y Return', 
-                            '10Y Return', '15Y Return', '3Y Div CAGR', '5Y Div CAGR', '10Y Div CAGR', '15Y Div CAGR']
+            # Define all numeric columns we want to average
+            numeric_cols = [
+                'Yield (TTM)', 'Yield (Fwd)', 
+                '1Y Total', 
+                '3Y Total', '3Y CAGR', 
+                '5Y Total', '5Y CAGR', 
+                '10Y Total', '10Y CAGR', 
+                '15Y Total', '15Y CAGR',
+                '3Y Div CAGR', '5Y Div CAGR', '10Y Div CAGR', '15Y Div CAGR'
+            ]
             
             avg_data = {col: df[col].mean() for col in numeric_cols if col in df.columns}
             avg_data['Ticker'] = "AVERAGE"
-            avg_data['Price'] = None # No average price
+            avg_data['Price'] = None 
             
-            # Create Average Row and Append
+            # Append Average Row
             df_avg = pd.DataFrame([avg_data])
             df_final = pd.concat([df, df_avg], ignore_index=True)
             
+            # Reorder columns for logical reading
             cols = [
                 'Ticker', 'Price', 'Streak', 'Freq', 'Yield (TTM)', 'Yield (Fwd)', 'Ex-Div', 'Payout',
-                '1Y Return', '3Y Return', '5Y Return', '10Y Return', '15Y Return',
+                '1Y Total', 
+                '3Y Total', '3Y CAGR', 
+                '5Y Total', '5Y CAGR', 
+                '10Y Total', '10Y CAGR', 
+                '15Y Total', '15Y CAGR',
                 '3Y Div CAGR', '5Y Div CAGR', '10Y Div CAGR', '15Y Div CAGR'
             ]
             final_cols = [c for c in cols if c in df_final.columns]
@@ -278,11 +307,15 @@ with tab2:
             
             fmt = {
                 'Price':'${:.2f}', 'Yield (TTM)':'{:.2%}', 'Yield (Fwd)':'{:.2%}', 
-                '1Y Return':'{:.2%}', '3Y Return':'{:.2%}', '5Y Return':'{:.2%}', '10Y Return':'{:.2%}', '15Y Return':'{:.2%}',
+                '1Y Total':'{:.2%}', 
+                '3Y Total':'{:.2%}', '3Y CAGR':'{:.2%}',
+                '5Y Total':'{:.2%}', '5Y CAGR':'{:.2%}',
+                '10Y Total':'{:.2%}', '10Y CAGR':'{:.2%}',
+                '15Y Total':'{:.2%}', '15Y CAGR':'{:.2%}',
                 '3Y Div CAGR':'{:.2%}', '5Y Div CAGR':'{:.2%}', '10Y Div CAGR':'{:.2%}', '15Y Div CAGR':'{:.2%}'
             }
             st.dataframe(df_final.style.format(fmt, na_rep="-"), height=600)
-            st.caption("*The 'AVERAGE' row assumes an equal-weight investment in all tickers listed above.*")
+            st.caption("* 'Total' = Total percent return over the period. 'CAGR' = Annualized return per year. *")
 
 # ==========================================
 # TAB 3: MULTI-ETF INSPECTION
