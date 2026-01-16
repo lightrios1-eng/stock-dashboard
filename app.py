@@ -14,20 +14,10 @@ tab1, tab2, tab3 = st.tabs(["🚀 Portfolio X-Ray", "📈 Dividend & Growth Data
 # --- SHARED HELPER: GOOG MERGER ---
 def merge_google(df, symbol_col='Symbol', weight_col='Weight'):
     """Combines GOOG and GOOGL into a single entry."""
-    # Create a copy to avoid SettingWithCopy warnings
     df = df.copy()
-    
-    # Replace ticker symbols
-    # We use regex=False to exact match
     df[symbol_col] = df[symbol_col].replace({'GOOG': 'GOOG/L', 'GOOGL': 'GOOG/L'})
-    
-    # Group by the Symbol column and sum the weights
-    # We use as_index=False to keep Symbol as a column
     df = df.groupby(symbol_col, as_index=False)[weight_col].sum()
-    
-    # Re-sort so the new combined GOOG/L goes to its correct rank
     df = df.sort_values(by=weight_col, ascending=False).reset_index(drop=True)
-    
     return df
 
 # ==========================================
@@ -57,10 +47,11 @@ with tab1:
             status.text(f"Fetching {ticker}...")
             try:
                 etf = yf.Ticker(ticker)
+                # Only use the modern method. If this fails, we skip nicely.
                 try:
                     raw_holdings = etf.funds_data.top_holdings
                 except:
-                    raw_holdings = etf.holdings
+                    raw_holdings = pd.DataFrame()
                 
                 if not raw_holdings.empty:
                     if isinstance(raw_holdings, pd.Series):
@@ -76,6 +67,9 @@ with tab1:
                     # Apply Weight
                     df['Portfolio_Weight'] = df['Raw_Weight'] * weights[ticker]
                     all_holdings.append(df)
+                else:
+                    # Log failure silently or nicely, don't crash
+                    pass
             except Exception as e:
                 st.error(f"Could not load {ticker}: {e}")
 
@@ -84,8 +78,7 @@ with tab1:
         if all_holdings:
             full_df = pd.concat(all_holdings)
             
-            # --- FIX: MERGE GOOG BEFORE GROUPING ---
-            # This ensures GOOG and GOOGL from different ETFs combine correctly
+            # MERGE GOOG
             full_df['Symbol'] = full_df['Symbol'].replace({'GOOG': 'GOOG/L', 'GOOGL': 'GOOG/L'})
             
             grouped = full_df.groupby('Symbol')['Portfolio_Weight'].sum().reset_index()
@@ -100,7 +93,7 @@ with tab1:
             with c2:
                 st.dataframe(grouped[['Symbol', 'Weight %']].head(20), height=500)
         else:
-            st.warning("No holdings data found. Yahoo might be blocking requests temporarily.")
+            st.warning("No holdings data found. Try refreshing in a minute.")
 
 # ==========================================
 # TAB 2: DIVIDEND DATA
@@ -238,15 +231,15 @@ with tab3:
             
             stock = yf.Ticker(target)
             
-            # 1. HOLDINGS (With Percentage Formatting)
+            # 1. HOLDINGS
             try:
+                # Try only funds_data
                 try:
                     raw = stock.funds_data.top_holdings
                 except:
-                    raw = stock.holdings
+                    raw = pd.DataFrame()
                     
                 if not raw.empty:
-                    # Clean Data
                     if isinstance(raw, pd.Series): df = raw.to_frame()
                     else: df = raw.copy()
                     
@@ -254,8 +247,7 @@ with tab3:
                     df = df.iloc[:, [0, -1]]
                     df.columns = ['Holding', 'Weight']
                     
-                    # --- FIX: MERGE GOOG BEFORE DISPLAY ---
-                    # Combine GOOG + GOOGL weights
+                    # MERGE GOOG
                     df = merge_google(df, symbol_col='Holding', weight_col='Weight')
                     
                     # FORMAT TO PERCENTAGE
@@ -264,7 +256,7 @@ with tab3:
                     st.write(f"**Top Holdings (GOOG merged):**")
                     st.table(df)
                 else:
-                    st.warning(f"No holdings found for {target}.")
+                    st.warning(f"No holdings found for {target}. (Yahoo Data Unavailable)")
             except Exception as e:
                 st.error(f"Error fetching holdings for {target}: {e}")
                 
