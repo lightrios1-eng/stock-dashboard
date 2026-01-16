@@ -29,7 +29,7 @@ BACKUP_CAGR_10Y = {
     "VYM": 0.095, "SCHD": 0.115, "JEPQ": 0.105
 }
 
-# Inception Date Backup (YYYY-MM-DD)
+# Inception Date Backup
 BACKUP_INCEPTION = {
     "SMH": "2011-12-20", "QQQ": "1999-03-10", "MGK": "2007-12-17", 
     "SCHG": "2009-12-11", "FTEC": "2013-10-21", "VOO": "2010-09-07", 
@@ -51,29 +51,20 @@ def merge_google(df, symbol_col='Symbol', weight_col='Weight'):
 
 def get_inception_date(ticker, info=None):
     """Fetches inception date from Info or Backup."""
-    # 1. Try passed info object first
     if info:
         ts = info.get('fundInceptionDate')
-        if ts:
-            return datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
-            
-    # 2. Try Fetching if not provided
+        if ts: return datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
     try:
         if not info:
             stock = yf.Ticker(ticker)
             ts = stock.info.get('fundInceptionDate')
-            if ts:
-                return datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
+            if ts: return datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
     except: pass
-
-    # 3. Backup Dictionary
-    if ticker in BACKUP_INCEPTION:
-        return BACKUP_INCEPTION[ticker]
-        
+    if ticker in BACKUP_INCEPTION: return BACKUP_INCEPTION[ticker]
     return "N/A"
 
 def get_cagr_for_year(ticker, years):
-    """Calculates CAGR for a specific year count. Returns None if data insufficient."""
+    """Calculates CAGR for a specific year count."""
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period="max", auto_adjust=True)
@@ -83,7 +74,6 @@ def get_cagr_for_year(ticker, years):
         start_date_target = end_date - timedelta(days=years*365)
         first_available_date = hist.index[0]
         
-        # Buffer of 60 days allowed
         if first_available_date > (start_date_target + timedelta(days=60)):
             if years == 10 and ticker in BACKUP_CAGR_10Y: return BACKUP_CAGR_10Y[ticker]
             return None
@@ -141,16 +131,12 @@ with tab1:
         blended_stats = {year: 0.0 for year in timeframes}
         valid_weights = {year: 0.0 for year in timeframes}
         
-        # Calculate Logic
         perf_table_data = []
-        
         for ticker in etf_list:
             weight = weights[ticker]
             if weight > 0:
-                # 1. Gather Perf Data for Table
                 inc_date = get_inception_date(ticker)
                 cagr_10 = get_cagr_for_year(ticker, 10)
-                
                 perf_table_data.append({
                     "Ticker": ticker,
                     "Allocation": f"{weight*100:.0f}%",
@@ -158,21 +144,18 @@ with tab1:
                     "10Y CAGR": f"{cagr_10:.2%}" if cagr_10 else "N/A"
                 })
 
-                # 2. Gather Blend Data
                 for year in timeframes:
                     cagr = get_cagr_for_year(ticker, year)
                     if cagr is not None:
                         blended_stats[year] += cagr * weight
                         valid_weights[year] += weight
         
-        # Normalize
         final_display = {}
         for year in timeframes:
             vw = valid_weights[year]
             if vw > 0.10: final_display[year] = (blended_stats[year] / vw)
             else: final_display[year] = None
         
-        # Display Metrics
         cols = st.columns(5)
         labels = ["1-Year", "3-Year", "5-Year", "10-Year", "15-Year"]
         for i, year in enumerate(timeframes):
@@ -180,12 +163,9 @@ with tab1:
             cols[i].metric(labels[i], f"{val:.2%}" if val is not None else "N/A")
         
         st.caption("*Weighted Average CAGR. ETFs too young for a timeframe are excluded from that average.*")
-        
-        # Display Info Table
         st.dataframe(pd.DataFrame(perf_table_data), hide_index=True)
         st.markdown("---")
 
-        # --- HOLDINGS LOGIC ---
         all_holdings = []
         status_text = []
         for ticker in etf_list:
@@ -216,7 +196,7 @@ with tab1:
         else: st.warning("Could not calculate holdings. Check spelling.")
 
 # ==========================================
-# TAB 2: DIVIDEND DATA
+# TAB 2: DIVIDEND DATA (WITH SHORT-TERM PERF)
 # ==========================================
 with tab2:
     def get_cagr_div(end, start, years):
@@ -273,18 +253,43 @@ with tab2:
         payout = datetime.fromtimestamp(payout).strftime('%Y-%m-%d') if payout else "-"
         
         streak, freq = get_streak_and_freq(div_hist)
-        
-        # Get Inception for Tab 2
         inc_date = get_inception_date(ticker, info)
 
         metrics = {
             'Ticker': ticker, 'Price': price, 
-            'Inception': inc_date, # ADDED
+            'Inception': inc_date,
             'Yield (TTM)': yield_ttm, 'Yield (Fwd)': yield_fwd,
             'Streak': streak, 'Freq': freq,
             'Ex-Div': ex_div, 'Payout': payout
         }
         
+        # --- SHORT TERM PERFORMANCE ---
+        # 1-Day
+        if len(hist) > 1:
+            metrics['1D'] = (price - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2]
+        else: metrics['1D'] = None
+        
+        # 1-Week (5 trading days)
+        if len(hist) > 5:
+            metrics['1W'] = (price - hist['Close'].iloc[-6]) / hist['Close'].iloc[-6]
+        else: metrics['1W'] = None
+        
+        # 1-Month (21 trading days)
+        if len(hist) > 21:
+            metrics['1M'] = (price - hist['Close'].iloc[-22]) / hist['Close'].iloc[-22]
+        else: metrics['1M'] = None
+
+        # YTD
+        current_year = datetime.now().year
+        ytd_start = f"{current_year}-01-01"
+        hist_ytd = hist[hist.index >= pd.Timestamp(ytd_start).tz_localize(hist.index.dtype.tz)]
+        if not hist_ytd.empty:
+            start_price_ytd = hist_ytd['Open'].iloc[0] # Use first open of year
+            metrics['YTD'] = (price - start_price_ytd) / start_price_ytd
+        else:
+            metrics['YTD'] = None
+
+        # --- LONG TERM PERFORMANCE ---
         curr_date = hist.index[-1]
         for y in [1, 3, 5, 10, 15]:
             target = curr_date - timedelta(days=y*365)
@@ -336,9 +341,10 @@ with tab2:
         if data:
             df = pd.DataFrame(data)
             
-            # Average Row Logic
+            # --- AVERAGE ROW ---
             numeric_cols = [
                 'Yield (TTM)', 'Yield (Fwd)', 
+                '1D', '1W', '1M', 'YTD',
                 '1Y Total', '3Y Total', '3Y CAGR', 
                 '5Y Total', '5Y CAGR', '10Y Total', '10Y CAGR', 
                 '15Y Total', '15Y CAGR',
@@ -355,6 +361,7 @@ with tab2:
             
             cols = [
                 'Ticker', 'Price', 'Inception', 'Streak', 'Freq', 'Yield (TTM)', 'Yield (Fwd)', 'Ex-Div', 'Payout',
+                '1D', '1W', '1M', 'YTD',
                 '1Y Total', 
                 '3Y Total', '3Y CAGR', 
                 '5Y Total', '5Y CAGR', 
@@ -367,6 +374,7 @@ with tab2:
             
             fmt = {
                 'Price':'${:.2f}', 'Yield (TTM)':'{:.2%}', 'Yield (Fwd)':'{:.2%}', 
+                '1D':'{:.2%}', '1W':'{:.2%}', '1M':'{:.2%}', 'YTD':'{:.2%}',
                 '1Y Total':'{:.2%}', 
                 '3Y Total':'{:.2%}', '3Y CAGR':'{:.2%}',
                 '5Y Total':'{:.2%}', '5Y CAGR':'{:.2%}',
