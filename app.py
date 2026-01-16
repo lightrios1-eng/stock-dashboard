@@ -22,8 +22,8 @@ BACKUP_HOLDINGS = {
     "SCHD": [["ABBV", 0.04], ["AVGO", 0.04], ["CVX", 0.04], ["KO", 0.04], ["PEP", 0.04], ["MRK", 0.04], ["HD", 0.04], ["TXN", 0.04], ["CSCO", 0.04], ["AMGN", 0.04]]
 }
 
-# Approx 10Y CAGR backup (As of 2026)
-BACKUP_CAGR = {
+# Simple Backup for 10Y CAGR if live fails
+BACKUP_CAGR_10Y = {
     "SMH": 0.285, "QQQ": 0.182, "MGK": 0.195, "SCHG": 0.188, 
     "FTEC": 0.205, "VOO": 0.128, "SPY": 0.128, "VGT": 0.192, 
     "VYM": 0.095, "SCHD": 0.115, "JEPQ": 0.105
@@ -41,19 +41,39 @@ def merge_google(df, symbol_col='Symbol', weight_col='Weight'):
     df = df.sort_values(by=weight_col, ascending=False).reset_index(drop=True)
     return df
 
-def get_cagr_robust(ticker):
-    """Calculates 10Y CAGR. Falls back to backup dict if Yahoo fails."""
+def get_cagr_for_year(ticker, years):
+    """Calculates CAGR for a specific year count."""
     try:
         stock = yf.Ticker(ticker)
-        hist = stock.history(period="10y", auto_adjust=True)
-        if not hist.empty and len(hist) > 200:
-            start_price = hist['Close'].iloc[0]
-            end_price = hist['Close'].iloc[-1]
-            years = (hist.index[-1] - hist.index[0]).days / 365.25
-            if years > 0:
+        # We fetch 'max' to ensure we have enough history for 15y
+        hist = stock.history(period="max", auto_adjust=True)
+        
+        if hist.empty: return 0.0
+        
+        # Calculate start date needed
+        end_date = hist.index[-1]
+        start_date_target = end_date - timedelta(days=years*365)
+        
+        # Find nearest available date
+        idx_loc = hist.index.get_indexer([start_date_target], method='nearest')
+        
+        if len(idx_loc) > 0 and idx_loc[0] >= 0:
+            idx = idx_loc[0]
+            # Verify the found date is actually close enough (within reasonable margin)
+            actual_start_date = hist.index[idx]
+            if abs((actual_start_date - start_date_target).days) < 180: # Allow 6mo buffer for old data
+                start_price = hist['Close'].iloc[idx]
+                end_price = hist['Close'].iloc[-1]
+                
+                # Formula: (End/Start)^(1/n) - 1
                 return (end_price / start_price) ** (1 / years) - 1
-    except: pass
-    if ticker in BACKUP_CAGR: return BACKUP_CAGR[ticker]
+    except:
+        pass
+        
+    # Backup: Only use backup dict if requesting 10Y
+    if years == 10 and ticker in BACKUP_CAGR_10Y:
+        return BACKUP_CAGR_10Y[ticker]
+        
     return 0.0
 
 def get_holdings_robust(ticker):
@@ -93,31 +113,32 @@ with tab1:
             total_weight += w
 
     if st.button("Analyze Blended Holdings"):
-        st.markdown("### 📈 Blended Performance")
-        blended_cagr = 0
-        perf_data = []
+        st.markdown("### 📈 Blended Performance (Annualized)")
         
+        # Initialize blended stats
+        timeframes = [1, 3, 5, 10, 15]
+        blended_stats = {year: 0.0 for year in timeframes}
+        
+        # Calculate weighted CAGR for each timeframe
         for ticker in etf_list:
             weight = weights[ticker]
             if weight > 0:
-                cagr = get_cagr_robust(ticker)
-                weighted_cagr = cagr * weight
-                blended_cagr += weighted_cagr
-                perf_data.append({
-                    "Ticker": ticker,
-                    "Allocation": f"{weight*100:.0f}%",
-                    "10Y CAGR (Annualized)": f"{cagr:.2%}"
-                })
+                for year in timeframes:
+                    cagr = get_cagr_for_year(ticker, year)
+                    blended_stats[year] += cagr * weight
         
-        c_perf1, c_perf2 = st.columns([1, 2])
-        with c_perf1:
-            st.metric(label="Blended 10Y CAGR", value=f"{blended_cagr:.2%}")
-            st.caption("*Weighted average of historical 10-year annualized returns.*")
-        with c_perf2:
-            st.dataframe(pd.DataFrame(perf_data), hide_index=True)
-
+        # Display Columns
+        m1, m3, m5, m10, m15 = st.columns(5)
+        m1.metric("1-Year", f"{blended_stats[1]:.2%}")
+        m3.metric("3-Year", f"{blended_stats[3]:.2%}")
+        m5.metric("5-Year", f"{blended_stats[5]:.2%}")
+        m10.metric("10-Year", f"{blended_stats[10]:.2%}")
+        m15.metric("15-Year", f"{blended_stats[15]:.2%}")
+        
+        st.caption("*Metrics show the Weighted Average Annualized Return (CAGR) for your specific mix.*")
         st.markdown("---")
 
+        # --- HOLDINGS LOGIC ---
         all_holdings = []
         status_text = []
         for ticker in etf_list:
@@ -148,7 +169,7 @@ with tab1:
         else: st.warning("Could not calculate holdings. Check spelling.")
 
 # ==========================================
-# TAB 2: DIVIDEND DATA (WITH ANNUALIZED RETURN)
+# TAB 2: DIVIDEND DATA (WITH AVERAGE ROW)
 # ==========================================
 with tab2:
     def get_cagr_div(end, start, years):
@@ -215,7 +236,6 @@ with tab2:
             'Ex-Div': ex_div, 'Payout': payout
         }
         
-        # --- CALCULATE RETURNS (TOTAL & CAGR) ---
         curr_date = hist.index[-1]
         for y in [1, 3, 5, 10, 15]:
             target = curr_date - timedelta(days=y*365)
@@ -231,7 +251,6 @@ with tab2:
                     metrics[f'{y}Y Total'] = total_ret
                     
                     # 2. Annualized Return (CAGR)
-                    # For 1 Year, CAGR is the same as Total Return.
                     if y > 1:
                         cagr = (end_price / start_price) ** (1 / y) - 1
                         metrics[f'{y}Y CAGR'] = cagr
@@ -273,7 +292,6 @@ with tab2:
             df = pd.DataFrame(data)
             
             # --- CALCULATE AVERAGE ROW ---
-            # Define all numeric columns we want to average
             numeric_cols = [
                 'Yield (TTM)', 'Yield (Fwd)', 
                 '1Y Total', 
@@ -288,11 +306,9 @@ with tab2:
             avg_data['Ticker'] = "AVERAGE"
             avg_data['Price'] = None 
             
-            # Append Average Row
             df_avg = pd.DataFrame([avg_data])
             df_final = pd.concat([df, df_avg], ignore_index=True)
             
-            # Reorder columns for logical reading
             cols = [
                 'Ticker', 'Price', 'Streak', 'Freq', 'Yield (TTM)', 'Yield (Fwd)', 'Ex-Div', 'Payout',
                 '1Y Total', 
