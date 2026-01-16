@@ -10,9 +10,8 @@ st.title("📊 Master Portfolio: X-Ray, Dividends & Holdings")
 
 # --- DATA BANKS ---
 
-# 1. Sector Map (Maps Ticker -> Sector for visual grouping)
+# 1. Sector Map
 SECTOR_MAP = {
-    # Technology
     "NVDA": "Technology", "MSFT": "Technology", "AAPL": "Technology", "AVGO": "Technology",
     "ORCL": "Technology", "ADBE": "Technology", "CRM": "Technology", "AMD": "Technology",
     "QCOM": "Technology", "TXN": "Technology", "INTC": "Technology", "AMAT": "Technology",
@@ -21,48 +20,67 @@ SECTOR_MAP = {
     "NOW": "Technology", "PLTR": "Technology", "ASML": "Technology", "TSM": "Technology",
     "NXPI": "Technology", "MPH": "Technology", "ON": "Technology", "MCHP": "Technology",
     "FTEC": "Technology", "VGT": "Technology", "SMH": "Technology", "XLK": "Technology",
-    
-    # Communication Services
     "GOOG": "Communication", "GOOGL": "Communication", "GOOG/L": "Communication",
     "META": "Communication", "NFLX": "Communication", "DIS": "Communication",
     "CMCSA": "Communication", "TMUS": "Communication", "VZ": "Communication",
     "T": "Communication", "CHTR": "Communication", "EA": "Communication",
-    
-    # Consumer Cyclical
     "AMZN": "Cons. Cyclical", "TSLA": "Cons. Cyclical", "HD": "Cons. Cyclical",
     "MCD": "Cons. Cyclical", "NKE": "Cons. Cyclical", "SBUX": "Cons. Cyclical",
     "LOW": "Cons. Cyclical", "BKNG": "Cons. Cyclical", "TJX": "Cons. Cyclical",
     "F": "Cons. Cyclical", "GM": "Cons. Cyclical", "TGT": "Cons. Cyclical",
-    
-    # Healthcare
     "LLY": "Healthcare", "UNH": "Healthcare", "JNJ": "Healthcare", "MRK": "Healthcare",
     "ABBV": "Healthcare", "TMO": "Healthcare", "PFE": "Healthcare", "AMGN": "Healthcare",
     "DHR": "Healthcare", "ISRG": "Healthcare", "ELV": "Healthcare", "BMY": "Healthcare",
-    
-    # Financial Services
     "JPM": "Financial", "V": "Financial", "MA": "Financial", "BAC": "Financial",
     "WFC": "Financial", "MS": "Financial", "GS": "Financial", "BLK": "Financial",
     "SPGI": "Financial", "AXP": "Financial", "C": "Financial", "BRK.B": "Financial",
-    
-    # Consumer Defensive
     "WMT": "Cons. Defensive", "PG": "Cons. Defensive", "COST": "Cons. Defensive",
     "KO": "Cons. Defensive", "PEP": "Cons. Defensive", "PM": "Cons. Defensive",
     "MO": "Cons. Defensive", "CL": "Cons. Defensive", "KMB": "Cons. Defensive",
-    
-    # Industrials
     "CAT": "Industrials", "UNP": "Industrials", "HON": "Industrials", "GE": "Industrials",
     "UPS": "Industrials", "BA": "Industrials", "LMT": "Industrials", "RTX": "Industrials",
     "DE": "Industrials", "MMM": "Industrials",
-    
-    # Energy
     "XOM": "Energy", "CVX": "Energy", "COP": "Energy", "SLB": "Energy", "EOG": "Energy",
-    
-    # Real Estate & Utilities
     "PLD": "Real Estate", "AMT": "Real Estate", "CCI": "Real Estate",
     "NEE": "Utilities", "DUK": "Utilities", "SO": "Utilities"
 }
 
-# 2. Backup Holdings (Failsafe)
+# 2. Industry Map (Detailed)
+INDUSTRY_MAP = {
+    "NVDA": "Semiconductors", "TSM": "Semiconductors", "AVGO": "Semiconductors",
+    "AMD": "Semiconductors", "ASML": "Semiconductors", "LRCX": "Semiconductors",
+    "MU": "Semiconductors", "AMAT": "Semiconductors", "TXN": "Semiconductors",
+    "INTC": "Semiconductors", "QCOM": "Semiconductors", "ADI": "Semiconductors",
+    "NXPI": "Semiconductors", "ON": "Semiconductors", "MCHP": "Semiconductors",
+    "MSFT": "Software - Infra", "ORCL": "Software - Infra", "ADBE": "Software - Infra",
+    "CRM": "Software - App", "SNPS": "Software - Infra", "CDNS": "Software - Infra",
+    "PANW": "Software - Infra", "NOW": "Software - App", "PLTR": "Software - App",
+    "AAPL": "Consumer Electronics", "HPQ": "Computer Hardware", "DELL": "Computer Hardware",
+    "GOOG": "Internet Content", "GOOGL": "Internet Content", "GOOG/L": "Internet Content",
+    "META": "Internet Content", "NFLX": "Entertainment", "DIS": "Entertainment",
+    "AMZN": "Internet Retail", "TSLA": "Auto Manufacturers", "F": "Auto Manufacturers",
+    "GM": "Auto Manufacturers", "HD": "Home Improvement", "LOW": "Home Improvement",
+    "MCD": "Restaurants", "SBUX": "Restaurants", "NKE": "Footwear & Accessories",
+    "BKNG": "Travel Services", "TJX": "Apparel Retail", "TGT": "Discount Stores",
+    "WMT": "Discount Stores", "COST": "Discount Stores", "PG": "Household Personal",
+    "KO": "Beverages", "PEP": "Beverages", "PM": "Tobacco", "MO": "Tobacco",
+    "LLY": "Drug Mfr - General", "JNJ": "Drug Mfr - General", "MRK": "Drug Mfr - General",
+    "ABBV": "Drug Mfr - General", "PFE": "Drug Mfr - General", "BMY": "Drug Mfr - General",
+    "UNH": "Healthcare Plans", "ELV": "Healthcare Plans", "CVS": "Healthcare Plans",
+    "JPM": "Banks - Diversified", "BAC": "Banks - Diversified", "WFC": "Banks - Diversified",
+    "C": "Banks - Diversified", "MS": "Capital Markets", "GS": "Capital Markets",
+    "BLK": "Asset Management", "V": "Credit Services", "MA": "Credit Services",
+    "AXP": "Credit Services", "SPGI": "Financial Data",
+    "CAT": "Farm & Heavy Const", "DE": "Farm & Heavy Const", "BA": "Aerospace & Defense",
+    "LMT": "Aerospace & Defense", "RTX": "Aerospace & Defense", "GE": "Specialty Ind Mach",
+    "UNP": "Railroads", "UPS": "Integrated Freight", "HON": "Conglomerates",
+    "XOM": "Oil & Gas Integrated", "CVX": "Oil & Gas Integrated", "COP": "Oil & Gas E&P",
+    "SLB": "Oil & Gas Equip", "EOG": "Oil & Gas E&P",
+    "PLD": "REIT - Industrial", "AMT": "REIT - Specialty", "CCI": "REIT - Specialty",
+    "NEE": "Utilities - Reg", "DUK": "Utilities - Reg", "SO": "Utilities - Reg"
+}
+
+# 3. Backup Holdings (Failsafe)
 BACKUP_HOLDINGS = {
     "SMH": [["NVDA", 0.20], ["TSM", 0.12], ["AVGO", 0.08], ["AMD", 0.05], ["ASML", 0.05], ["LRCX", 0.04], ["MU", 0.04], ["AMAT", 0.04], ["TXN", 0.04], ["INTC", 0.03]],
     "QQQ": [["AAPL", 0.08], ["MSFT", 0.08], ["NVDA", 0.07], ["AMZN", 0.05], ["META", 0.04], ["AVGO", 0.04], ["GOOGL", 0.03], ["GOOG", 0.03], ["TSLA", 0.02], ["COST", 0.02]],
@@ -76,14 +94,14 @@ BACKUP_HOLDINGS = {
     "SCHD": [["ABBV", 0.04], ["AVGO", 0.04], ["CVX", 0.04], ["KO", 0.04], ["PEP", 0.04], ["MRK", 0.04], ["HD", 0.04], ["TXN", 0.04], ["CSCO", 0.04], ["AMGN", 0.04]]
 }
 
-# 3. 10Y CAGR Backup
+# 4. 10Y CAGR Backup
 BACKUP_CAGR_10Y = {
     "SMH": 0.285, "QQQ": 0.182, "MGK": 0.195, "SCHG": 0.188, 
     "FTEC": 0.205, "VOO": 0.128, "SPY": 0.128, "VGT": 0.192, 
     "VYM": 0.095, "SCHD": 0.115, "JEPQ": 0.105
 }
 
-# 4. Inception Date Backup
+# 5. Inception Date Backup
 BACKUP_INCEPTION = {
     "SMH": "2011-12-20", "QQQ": "1999-03-10", "MGK": "2007-12-17", 
     "SCHG": "2009-12-11", "FTEC": "2013-10-21", "VOO": "2010-09-07", 
@@ -104,8 +122,14 @@ def merge_google(df, symbol_col='Symbol', weight_col='Weight'):
     return df
 
 def get_sector(ticker):
-    """Returns sector from map or 'Other'."""
     return SECTOR_MAP.get(ticker, "Other / Diversified")
+
+def get_industry(ticker):
+    """Returns industry from map or defaults to Sector."""
+    if ticker in INDUSTRY_MAP:
+        return INDUSTRY_MAP[ticker]
+    # Fallback to sector if industry not found, or generic "ETF/Fund"
+    return SECTOR_MAP.get(ticker, "ETF / Fund")
 
 def get_inception_date(ticker, info=None):
     if info:
@@ -162,7 +186,7 @@ def get_holdings_robust(ticker):
     return pd.DataFrame(), "Failed"
 
 # ==========================================
-# TAB 1: PORTFOLIO X-RAY (WITH SECTORS)
+# TAB 1: PORTFOLIO X-RAY (WITH SECTORS & INDUSTRIES)
 # ==========================================
 with tab1:
     st.header("See what you actually own")
@@ -241,8 +265,9 @@ with tab1:
             grouped = full_df.groupby('Symbol')['Portfolio_Weight'].sum().reset_index()
             grouped = grouped.sort_values(by='Portfolio_Weight', ascending=False)
             
-            # --- MAP SECTORS ---
+            # --- MAP SECTORS & INDUSTRY ---
             grouped['Sector'] = grouped['Symbol'].apply(get_sector)
+            grouped['Industry'] = grouped['Symbol'].apply(get_industry)
             grouped['Weight %'] = (grouped['Portfolio_Weight'] * 100).round(2)
             
             c1, c2 = st.columns([2, 1])
@@ -255,16 +280,16 @@ with tab1:
                     title="Portfolio Composition by Sector",
                     color='Sector',
                 )
-                # Force Text Inside
                 fig.update_traces(textinfo="label+value", texttemplate="%{label}<br>%{value}%")
                 st.plotly_chart(fig, use_container_width=True)
                 
             with c2:
-                st.dataframe(grouped[['Symbol', 'Sector', 'Weight %']].head(20), height=500)
+                # Added Industry Column here
+                st.dataframe(grouped[['Symbol', 'Sector', 'Industry', 'Weight %']].head(20), height=500)
         else: st.warning("Could not calculate holdings. Check spelling.")
 
 # ==========================================
-# TAB 2: DIVIDEND DATA
+# TAB 2: DIVIDEND DATA (WITH INDUSTRY)
 # ==========================================
 with tab2:
     def get_cagr_div(end, start, years):
@@ -322,9 +347,11 @@ with tab2:
         
         streak, freq = get_streak_and_freq(div_hist)
         inc_date = get_inception_date(ticker, info)
+        industry = get_industry(ticker) # Fetch Industry
 
         metrics = {
             'Ticker': ticker, 'Price': price, 
+            'Industry': industry, # ADDED
             'Inception': inc_date,
             'Yield (TTM)': yield_ttm, 'Yield (Fwd)': yield_fwd,
             'Streak': streak, 'Freq': freq,
@@ -408,6 +435,7 @@ with tab2:
             ]
             avg_data = {col: df[col].mean() for col in numeric_cols if col in df.columns}
             avg_data['Ticker'] = "AVERAGE"
+            avg_data['Industry'] = "-"
             avg_data['Inception'] = "-"
             avg_data['Price'] = None 
             
@@ -415,7 +443,7 @@ with tab2:
             df_final = pd.concat([df, df_avg], ignore_index=True)
             
             cols = [
-                'Ticker', 'Price', 'Inception', 'Streak', 'Freq', 'Yield (TTM)', 'Yield (Fwd)', 'Ex-Div', 'Payout',
+                'Ticker', 'Price', 'Industry', 'Inception', 'Streak', 'Freq', 'Yield (TTM)', 'Yield (Fwd)', 'Ex-Div', 'Payout',
                 '1D', '1W', '1M', 'YTD',
                 '1Y Total', 
                 '3Y Total', '3Y CAGR', 
