@@ -8,6 +8,17 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="Master Portfolio", layout="wide")
 st.title("📊 Master Portfolio: X-Ray, Dividends & Holdings")
 
+# --- BACKUP DATA BANK (Failsafe for when Yahoo blocks Cloud IPs) ---
+BACKUP_HOLDINGS = {
+    "SMH": [["NVDA", 0.20], ["TSM", 0.12], ["AVGO", 0.08], ["AMD", 0.05], ["ASML", 0.05], ["LRCX", 0.04], ["MU", 0.04], ["AMAT", 0.04], ["TXN", 0.04], ["INTC", 0.03]],
+    "QQQ": [["AAPL", 0.08], ["MSFT", 0.08], ["NVDA", 0.07], ["AMZN", 0.05], ["META", 0.04], ["AVGO", 0.04], ["GOOGL", 0.03], ["GOOG", 0.03], ["TSLA", 0.02], ["COST", 0.02]],
+    "MGK": [["AAPL", 0.13], ["MSFT", 0.12], ["NVDA", 0.11], ["AMZN", 0.06], ["META", 0.04], ["GOOGL", 0.04], ["GOOG", 0.03], ["TSLA", 0.03], ["AVGO", 0.03], ["LLY", 0.02]],
+    "SCHG": [["NVDA", 0.11], ["MSFT", 0.11], ["AAPL", 0.10], ["AMZN", 0.06], ["META", 0.04], ["GOOGL", 0.04], ["GOOG", 0.03], ["AVGO", 0.03], ["TSLA", 0.03], ["LLY", 0.02]],
+    "FTEC": [["AAPL", 0.21], ["MSFT", 0.19], ["NVDA", 0.15], ["AVGO", 0.05], ["CRM", 0.02], ["ADBE", 0.02], ["ORCL", 0.02], ["AMD", 0.02], ["ACN", 0.02], ["CSCO", 0.01]],
+    "VOO": [["MSFT", 0.07], ["AAPL", 0.06], ["NVDA", 0.06], ["AMZN", 0.03], ["META", 0.02], ["GOOGL", 0.02], ["GOOG", 0.01], ["AVGO", 0.01], ["LLY", 0.01], ["TSLA", 0.01]],
+    "SPY": [["MSFT", 0.07], ["AAPL", 0.06], ["NVDA", 0.06], ["AMZN", 0.03], ["META", 0.02], ["GOOGL", 0.02], ["GOOG", 0.01], ["AVGO", 0.01], ["LLY", 0.01], ["TSLA", 0.01]]
+}
+
 # --- TABS ---
 tab1, tab2, tab3 = st.tabs(["🚀 Portfolio X-Ray", "📈 Dividend & Growth Data", "🔍 Multi-ETF Deep Dive"])
 
@@ -19,6 +30,31 @@ def merge_google(df, symbol_col='Symbol', weight_col='Weight'):
     df = df.groupby(symbol_col, as_index=False)[weight_col].sum()
     df = df.sort_values(by=weight_col, ascending=False).reset_index(drop=True)
     return df
+
+# --- HELPER: GET HOLDINGS (With Backup) ---
+def get_holdings_robust(ticker):
+    """Tries Yahoo first, falls back to Backup if failed."""
+    stock = yf.Ticker(ticker)
+    
+    # 1. Try Live Yahoo Data
+    try:
+        df = stock.funds_data.top_holdings
+        if not df.empty:
+            if isinstance(df, pd.Series): df = df.to_frame()
+            df = df.reset_index()
+            df = df.iloc[:, [0, -1]]
+            df.columns = ['Symbol', 'Raw_Weight']
+            return df, "Live Data"
+    except:
+        pass
+
+    # 2. Try Backup Dictionary
+    if ticker in BACKUP_HOLDINGS:
+        data = BACKUP_HOLDINGS[ticker]
+        df = pd.DataFrame(data, columns=['Symbol', 'Raw_Weight'])
+        return df, "Backup Data"
+
+    return pd.DataFrame(), "Failed"
 
 # ==========================================
 # TAB 1: PORTFOLIO X-RAY
@@ -41,39 +77,22 @@ with tab1:
 
     if st.button("Analyze Blended Holdings"):
         all_holdings = []
-        status = st.empty()
+        status_text = []
         
         for ticker in etf_list:
-            status.text(f"Fetching {ticker}...")
-            try:
-                etf = yf.Ticker(ticker)
-                # Only use the modern method. If this fails, we skip nicely.
-                try:
-                    raw_holdings = etf.funds_data.top_holdings
-                except:
-                    raw_holdings = pd.DataFrame()
-                
-                if not raw_holdings.empty:
-                    if isinstance(raw_holdings, pd.Series):
-                        df = raw_holdings.to_frame()
-                    else:
-                        df = raw_holdings.copy()
-                    
-                    df = df.reset_index()
-                    # FORCE 2 COLUMNS
-                    df = df.iloc[:, [0, -1]]
-                    df.columns = ['Symbol', 'Raw_Weight']
-                    
-                    # Apply Weight
-                    df['Portfolio_Weight'] = df['Raw_Weight'] * weights[ticker]
-                    all_holdings.append(df)
-                else:
-                    # Log failure silently or nicely, don't crash
-                    pass
-            except Exception as e:
-                st.error(f"Could not load {ticker}: {e}")
+            df, source = get_holdings_robust(ticker)
+            
+            if not df.empty:
+                df['Portfolio_Weight'] = df['Raw_Weight'] * weights[ticker]
+                all_holdings.append(df)
+                if source == "Backup Data":
+                    status_text.append(f"⚠️ {ticker}: Used backup data (Yahoo blocked).")
+            else:
+                status_text.append(f"❌ {ticker}: No data found.")
 
-        status.empty()
+        # Show status messages if any backups were used
+        if status_text:
+            st.info(" | ".join(status_text))
 
         if all_holdings:
             full_df = pd.concat(all_holdings)
@@ -93,7 +112,7 @@ with tab1:
             with c2:
                 st.dataframe(grouped[['Symbol', 'Weight %']].head(20), height=500)
         else:
-            st.warning("No holdings data found. Try refreshing in a minute.")
+            st.warning("Could not calculate holdings. Please check ticker spelling.")
 
 # ==========================================
 # TAB 2: DIVIDEND DATA
@@ -229,45 +248,24 @@ with tab3:
             st.markdown(f"---")
             st.markdown(f"### 🔎 Analysis for **{target}**")
             
-            stock = yf.Ticker(target)
+            # Use Robust Getter
+            df, source = get_holdings_robust(target)
             
-            # 1. HOLDINGS
-            try:
-                # Try only funds_data
-                try:
-                    raw = stock.funds_data.top_holdings
-                except:
-                    raw = pd.DataFrame()
-                    
-                if not raw.empty:
-                    if isinstance(raw, pd.Series): df = raw.to_frame()
-                    else: df = raw.copy()
-                    
-                    df = df.reset_index()
-                    df = df.iloc[:, [0, -1]]
-                    df.columns = ['Holding', 'Weight']
-                    
-                    # MERGE GOOG
-                    df = merge_google(df, symbol_col='Holding', weight_col='Weight')
-                    
-                    # FORMAT TO PERCENTAGE
-                    df['Weight'] = (df['Weight'] * 100).map('{:.2f}%'.format)
-                    
-                    st.write(f"**Top Holdings (GOOG merged):**")
-                    st.table(df)
-                else:
-                    st.warning(f"No holdings found for {target}. (Yahoo Data Unavailable)")
-            except Exception as e:
-                st.error(f"Error fetching holdings for {target}: {e}")
+            if not df.empty:
+                df.columns = ['Holding', 'Weight']
                 
-            # 2. SECTORS
-            try:
-                sect = stock.funds_data.sector_weightings
-                if sect:
-                    sdf = pd.DataFrame(list(sect.items()), columns=['Sector', 'Weight'])
+                # MERGE GOOG
+                df = merge_google(df, symbol_col='Holding', weight_col='Weight')
+                
+                # FORMAT
+                df['Weight'] = (df['Weight'] * 100).map('{:.2f}%'.format)
+                
+                if source == "Backup Data":
+                    st.caption(f"⚠️ Yahoo blocked the connection. Using cached backup data for {target}.")
+                else:
+                    st.caption(f"✅ Live data fetched from Yahoo Finance.")
                     
-                    col_chart, col_data = st.columns([1, 1])
-                    with col_chart:
-                        fig = px.pie(sdf, values='Weight', names='Sector', title=f"{target} Sector Allocation")
-                        st.plotly_chart(fig, use_container_width=True)
-            except: pass
+                st.write(f"**Top Holdings (GOOG merged):**")
+                st.table(df)
+            else:
+                st.error(f"Could not fetch holdings for {target}. (Not in backup list)")
