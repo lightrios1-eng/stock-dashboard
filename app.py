@@ -8,7 +8,61 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="Master Portfolio", layout="wide")
 st.title("📊 Master Portfolio: X-Ray, Dividends & Holdings")
 
-# --- BACKUP DATA BANKS (Failsafe) ---
+# --- DATA BANKS ---
+
+# 1. Sector Map (Maps Ticker -> Sector for visual grouping)
+SECTOR_MAP = {
+    # Technology
+    "NVDA": "Technology", "MSFT": "Technology", "AAPL": "Technology", "AVGO": "Technology",
+    "ORCL": "Technology", "ADBE": "Technology", "CRM": "Technology", "AMD": "Technology",
+    "QCOM": "Technology", "TXN": "Technology", "INTC": "Technology", "AMAT": "Technology",
+    "IBM": "Technology", "MU": "Technology", "LRCX": "Technology", "ADI": "Technology",
+    "KLAC": "Technology", "SNPS": "Technology", "CDNS": "Technology", "PANW": "Technology",
+    "NOW": "Technology", "PLTR": "Technology", "ASML": "Technology", "TSM": "Technology",
+    "NXPI": "Technology", "MPH": "Technology", "ON": "Technology", "MCHP": "Technology",
+    "FTEC": "Technology", "VGT": "Technology", "SMH": "Technology", "XLK": "Technology",
+    
+    # Communication Services
+    "GOOG": "Communication", "GOOGL": "Communication", "GOOG/L": "Communication",
+    "META": "Communication", "NFLX": "Communication", "DIS": "Communication",
+    "CMCSA": "Communication", "TMUS": "Communication", "VZ": "Communication",
+    "T": "Communication", "CHTR": "Communication", "EA": "Communication",
+    
+    # Consumer Cyclical
+    "AMZN": "Cons. Cyclical", "TSLA": "Cons. Cyclical", "HD": "Cons. Cyclical",
+    "MCD": "Cons. Cyclical", "NKE": "Cons. Cyclical", "SBUX": "Cons. Cyclical",
+    "LOW": "Cons. Cyclical", "BKNG": "Cons. Cyclical", "TJX": "Cons. Cyclical",
+    "F": "Cons. Cyclical", "GM": "Cons. Cyclical", "TGT": "Cons. Cyclical",
+    
+    # Healthcare
+    "LLY": "Healthcare", "UNH": "Healthcare", "JNJ": "Healthcare", "MRK": "Healthcare",
+    "ABBV": "Healthcare", "TMO": "Healthcare", "PFE": "Healthcare", "AMGN": "Healthcare",
+    "DHR": "Healthcare", "ISRG": "Healthcare", "ELV": "Healthcare", "BMY": "Healthcare",
+    
+    # Financial Services
+    "JPM": "Financial", "V": "Financial", "MA": "Financial", "BAC": "Financial",
+    "WFC": "Financial", "MS": "Financial", "GS": "Financial", "BLK": "Financial",
+    "SPGI": "Financial", "AXP": "Financial", "C": "Financial", "BRK.B": "Financial",
+    
+    # Consumer Defensive
+    "WMT": "Cons. Defensive", "PG": "Cons. Defensive", "COST": "Cons. Defensive",
+    "KO": "Cons. Defensive", "PEP": "Cons. Defensive", "PM": "Cons. Defensive",
+    "MO": "Cons. Defensive", "CL": "Cons. Defensive", "KMB": "Cons. Defensive",
+    
+    # Industrials
+    "CAT": "Industrials", "UNP": "Industrials", "HON": "Industrials", "GE": "Industrials",
+    "UPS": "Industrials", "BA": "Industrials", "LMT": "Industrials", "RTX": "Industrials",
+    "DE": "Industrials", "MMM": "Industrials",
+    
+    # Energy
+    "XOM": "Energy", "CVX": "Energy", "COP": "Energy", "SLB": "Energy", "EOG": "Energy",
+    
+    # Real Estate & Utilities
+    "PLD": "Real Estate", "AMT": "Real Estate", "CCI": "Real Estate",
+    "NEE": "Utilities", "DUK": "Utilities", "SO": "Utilities"
+}
+
+# 2. Backup Holdings (Failsafe)
 BACKUP_HOLDINGS = {
     "SMH": [["NVDA", 0.20], ["TSM", 0.12], ["AVGO", 0.08], ["AMD", 0.05], ["ASML", 0.05], ["LRCX", 0.04], ["MU", 0.04], ["AMAT", 0.04], ["TXN", 0.04], ["INTC", 0.03]],
     "QQQ": [["AAPL", 0.08], ["MSFT", 0.08], ["NVDA", 0.07], ["AMZN", 0.05], ["META", 0.04], ["AVGO", 0.04], ["GOOGL", 0.03], ["GOOG", 0.03], ["TSLA", 0.02], ["COST", 0.02]],
@@ -22,14 +76,14 @@ BACKUP_HOLDINGS = {
     "SCHD": [["ABBV", 0.04], ["AVGO", 0.04], ["CVX", 0.04], ["KO", 0.04], ["PEP", 0.04], ["MRK", 0.04], ["HD", 0.04], ["TXN", 0.04], ["CSCO", 0.04], ["AMGN", 0.04]]
 }
 
-# 10Y Backup only.
+# 3. 10Y CAGR Backup
 BACKUP_CAGR_10Y = {
     "SMH": 0.285, "QQQ": 0.182, "MGK": 0.195, "SCHG": 0.188, 
     "FTEC": 0.205, "VOO": 0.128, "SPY": 0.128, "VGT": 0.192, 
     "VYM": 0.095, "SCHD": 0.115, "JEPQ": 0.105
 }
 
-# Inception Date Backup
+# 4. Inception Date Backup
 BACKUP_INCEPTION = {
     "SMH": "2011-12-20", "QQQ": "1999-03-10", "MGK": "2007-12-17", 
     "SCHG": "2009-12-11", "FTEC": "2013-10-21", "VOO": "2010-09-07", 
@@ -49,8 +103,11 @@ def merge_google(df, symbol_col='Symbol', weight_col='Weight'):
     df = df.sort_values(by=weight_col, ascending=False).reset_index(drop=True)
     return df
 
+def get_sector(ticker):
+    """Returns sector from map or 'Other'."""
+    return SECTOR_MAP.get(ticker, "Other / Diversified")
+
 def get_inception_date(ticker, info=None):
-    """Fetches inception date from Info or Backup."""
     if info:
         ts = info.get('fundInceptionDate')
         if ts: return datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
@@ -64,7 +121,6 @@ def get_inception_date(ticker, info=None):
     return "N/A"
 
 def get_cagr_for_year(ticker, years):
-    """Calculates CAGR for a specific year count."""
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period="max", auto_adjust=True)
@@ -106,7 +162,7 @@ def get_holdings_robust(ticker):
     return pd.DataFrame(), "Failed"
 
 # ==========================================
-# TAB 1: PORTFOLIO X-RAY
+# TAB 1: PORTFOLIO X-RAY (WITH SECTORS)
 # ==========================================
 with tab1:
     st.header("See what you actually own")
@@ -125,13 +181,13 @@ with tab1:
             total_weight += w
 
     if st.button("Analyze Blended Holdings"):
+        # --- PERFORMANCE METRICS ---
         st.markdown("### 📈 Blended Performance (Annualized)")
-        
         timeframes = [1, 3, 5, 10, 15]
         blended_stats = {year: 0.0 for year in timeframes}
         valid_weights = {year: 0.0 for year in timeframes}
-        
         perf_table_data = []
+        
         for ticker in etf_list:
             weight = weights[ticker]
             if weight > 0:
@@ -143,7 +199,6 @@ with tab1:
                     "Inception": inc_date,
                     "10Y CAGR": f"{cagr_10:.2%}" if cagr_10 else "N/A"
                 })
-
                 for year in timeframes:
                     cagr = get_cagr_for_year(ticker, year)
                     if cagr is not None:
@@ -162,10 +217,11 @@ with tab1:
             val = final_display[year]
             cols[i].metric(labels[i], f"{val:.2%}" if val is not None else "N/A")
         
-        st.caption("*Weighted Average CAGR. ETFs too young for a timeframe are excluded from that average.*")
+        st.caption("*Weighted Average CAGR. ETFs too young for a timeframe are excluded.*")
         st.dataframe(pd.DataFrame(perf_table_data), hide_index=True)
         st.markdown("---")
 
+        # --- HOLDINGS & SECTOR TREEMAP ---
         all_holdings = []
         status_text = []
         for ticker in etf_list:
@@ -184,19 +240,31 @@ with tab1:
             full_df = merge_google(full_df, symbol_col='Symbol', weight_col='Portfolio_Weight')
             grouped = full_df.groupby('Symbol')['Portfolio_Weight'].sum().reset_index()
             grouped = grouped.sort_values(by='Portfolio_Weight', ascending=False)
+            
+            # --- MAP SECTORS ---
+            grouped['Sector'] = grouped['Symbol'].apply(get_sector)
             grouped['Weight %'] = (grouped['Portfolio_Weight'] * 100).round(2)
             
             c1, c2 = st.columns([2, 1])
             with c1:
-                fig = px.treemap(grouped.head(30), path=['Symbol'], values='Portfolio_Weight', 
-                                 title="Top Overlapping Holdings", color='Portfolio_Weight', color_continuous_scale='RdBu')
+                # TREEMAP WITH SECTORS
+                fig = px.treemap(
+                    grouped.head(40), 
+                    path=[px.Constant("Portfolio"), 'Sector', 'Symbol'], 
+                    values='Weight %',
+                    title="Portfolio Composition by Sector",
+                    color='Sector',
+                )
+                # Force Text Inside
+                fig.update_traces(textinfo="label+value", texttemplate="%{label}<br>%{value}%")
                 st.plotly_chart(fig, use_container_width=True)
+                
             with c2:
-                st.dataframe(grouped[['Symbol', 'Weight %']].head(20), height=500)
+                st.dataframe(grouped[['Symbol', 'Sector', 'Weight %']].head(20), height=500)
         else: st.warning("Could not calculate holdings. Check spelling.")
 
 # ==========================================
-# TAB 2: DIVIDEND DATA (WITH SHORT-TERM PERF)
+# TAB 2: DIVIDEND DATA
 # ==========================================
 with tab2:
     def get_cagr_div(end, start, years):
@@ -263,33 +331,23 @@ with tab2:
             'Ex-Div': ex_div, 'Payout': payout
         }
         
-        # --- SHORT TERM PERFORMANCE ---
-        # 1-Day
-        if len(hist) > 1:
-            metrics['1D'] = (price - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2]
+        # Short Term
+        if len(hist) > 1: metrics['1D'] = (price - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2]
         else: metrics['1D'] = None
-        
-        # 1-Week (5 trading days)
-        if len(hist) > 5:
-            metrics['1W'] = (price - hist['Close'].iloc[-6]) / hist['Close'].iloc[-6]
+        if len(hist) > 5: metrics['1W'] = (price - hist['Close'].iloc[-6]) / hist['Close'].iloc[-6]
         else: metrics['1W'] = None
-        
-        # 1-Month (21 trading days)
-        if len(hist) > 21:
-            metrics['1M'] = (price - hist['Close'].iloc[-22]) / hist['Close'].iloc[-22]
+        if len(hist) > 21: metrics['1M'] = (price - hist['Close'].iloc[-22]) / hist['Close'].iloc[-22]
         else: metrics['1M'] = None
 
-        # YTD
         current_year = datetime.now().year
         ytd_start = f"{current_year}-01-01"
         hist_ytd = hist[hist.index >= pd.Timestamp(ytd_start).tz_localize(hist.index.dtype.tz)]
         if not hist_ytd.empty:
-            start_price_ytd = hist_ytd['Open'].iloc[0] # Use first open of year
+            start_price_ytd = hist_ytd['Open'].iloc[0]
             metrics['YTD'] = (price - start_price_ytd) / start_price_ytd
-        else:
-            metrics['YTD'] = None
+        else: metrics['YTD'] = None
 
-        # --- LONG TERM PERFORMANCE ---
+        # Long Term
         curr_date = hist.index[-1]
         for y in [1, 3, 5, 10, 15]:
             target = curr_date - timedelta(days=y*365)
@@ -340,8 +398,6 @@ with tab2:
         
         if data:
             df = pd.DataFrame(data)
-            
-            # --- AVERAGE ROW ---
             numeric_cols = [
                 'Yield (TTM)', 'Yield (Fwd)', 
                 '1D', '1W', '1M', 'YTD',
@@ -350,7 +406,6 @@ with tab2:
                 '15Y Total', '15Y CAGR',
                 '3Y Div CAGR', '5Y Div CAGR', '10Y Div CAGR', '15Y Div CAGR'
             ]
-            
             avg_data = {col: df[col].mean() for col in numeric_cols if col in df.columns}
             avg_data['Ticker'] = "AVERAGE"
             avg_data['Inception'] = "-"
@@ -398,23 +453,18 @@ with tab3:
         for target in targets:
             st.markdown(f"---")
             st.markdown(f"### 🔎 Analysis for **{target}**")
-            
             inc_date = get_inception_date(target)
             st.write(f"**Inception Date:** {inc_date}")
             
             df, source = get_holdings_robust(target)
-            
             if not df.empty:
                 df.columns = ['Holding', 'Weight']
                 df = merge_google(df, symbol_col='Holding', weight_col='Weight')
                 df['Weight'] = (df['Weight'] * 100).map('{:.2f}%'.format)
                 
-                if source == "Backup Data":
-                    st.caption(f"⚠️ Yahoo blocked the connection. Using cached backup data.")
-                else:
-                    st.caption(f"✅ Live data fetched from Yahoo Finance.")
+                if source == "Backup Data": st.caption(f"⚠️ Yahoo blocked the connection. Using cached backup data.")
+                else: st.caption(f"✅ Live data fetched from Yahoo Finance.")
                     
                 st.write(f"**Top Holdings (GOOG merged):**")
                 st.table(df)
-            else:
-                st.error(f"Could not fetch holdings for {target}. (Not in backup list)")
+            else: st.error(f"Could not fetch holdings for {target}. (Not in backup list)")
