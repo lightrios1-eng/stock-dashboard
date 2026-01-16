@@ -22,7 +22,7 @@ BACKUP_HOLDINGS = {
     "SCHD": [["ABBV", 0.04], ["AVGO", 0.04], ["CVX", 0.04], ["KO", 0.04], ["PEP", 0.04], ["MRK", 0.04], ["HD", 0.04], ["TXN", 0.04], ["CSCO", 0.04], ["AMGN", 0.04]]
 }
 
-# Simple Backup for 10Y CAGR if live fails
+# 10Y Backup only. We don't backup 15Y for young ETFs.
 BACKUP_CAGR_10Y = {
     "SMH": 0.285, "QQQ": 0.182, "MGK": 0.195, "SCHG": 0.188, 
     "FTEC": 0.205, "VOO": 0.128, "SPY": 0.128, "VGT": 0.192, 
@@ -42,39 +42,44 @@ def merge_google(df, symbol_col='Symbol', weight_col='Weight'):
     return df
 
 def get_cagr_for_year(ticker, years):
-    """Calculates CAGR for a specific year count."""
+    """Calculates CAGR for a specific year count. Returns None if data insufficient."""
     try:
         stock = yf.Ticker(ticker)
-        # We fetch 'max' to ensure we have enough history for 15y
+        # Fetch max history
         hist = stock.history(period="max", auto_adjust=True)
         
-        if hist.empty: return 0.0
+        if hist.empty: return None
         
         # Calculate start date needed
         end_date = hist.index[-1]
         start_date_target = end_date - timedelta(days=years*365)
         
-        # Find nearest available date
+        # Check if history goes back far enough
+        first_available_date = hist.index[0]
+        # Buffer of 60 days allowed
+        if first_available_date > (start_date_target + timedelta(days=60)):
+            # ETF is too young
+            if years == 10 and ticker in BACKUP_CAGR_10Y:
+                return BACKUP_CAGR_10Y[ticker]
+            return None
+
+        # Find nearest date
         idx_loc = hist.index.get_indexer([start_date_target], method='nearest')
         
         if len(idx_loc) > 0 and idx_loc[0] >= 0:
             idx = idx_loc[0]
-            # Verify the found date is actually close enough (within reasonable margin)
-            actual_start_date = hist.index[idx]
-            if abs((actual_start_date - start_date_target).days) < 180: # Allow 6mo buffer for old data
-                start_price = hist['Close'].iloc[idx]
-                end_price = hist['Close'].iloc[-1]
-                
-                # Formula: (End/Start)^(1/n) - 1
-                return (end_price / start_price) ** (1 / years) - 1
+            start_price = hist['Close'].iloc[idx]
+            end_price = hist['Close'].iloc[-1]
+            return (end_price / start_price) ** (1 / years) - 1
+            
     except:
         pass
         
-    # Backup: Only use backup dict if requesting 10Y
+    # Final backup check for 10Y only
     if years == 10 and ticker in BACKUP_CAGR_10Y:
         return BACKUP_CAGR_10Y[ticker]
         
-    return 0.0
+    return None
 
 def get_holdings_robust(ticker):
     stock = yf.Ticker(ticker)
@@ -115,27 +120,43 @@ with tab1:
     if st.button("Analyze Blended Holdings"):
         st.markdown("### 📈 Blended Performance (Annualized)")
         
-        # Initialize blended stats
         timeframes = [1, 3, 5, 10, 15]
-        blended_stats = {year: 0.0 for year in timeframes}
+        blended_stats = {}
+        valid_weights = {year: 0.0 for year in timeframes}
         
-        # Calculate weighted CAGR for each timeframe
+        # Initialize blended stats to 0
+        for year in timeframes: blended_stats[year] = 0.0
+
+        # Calculate Logic
         for ticker in etf_list:
             weight = weights[ticker]
             if weight > 0:
                 for year in timeframes:
                     cagr = get_cagr_for_year(ticker, year)
-                    blended_stats[year] += cagr * weight
+                    if cagr is not None:
+                        blended_stats[year] += cagr * weight
+                        valid_weights[year] += weight
+        
+        # Normalize (Re-weight to 100% based on available data)
+        final_display = {}
+        for year in timeframes:
+            vw = valid_weights[year]
+            if vw > 0.10: # If at least 10% of portfolio has data
+                final_display[year] = (blended_stats[year] / vw)
+            else:
+                final_display[year] = None
         
         # Display Columns
-        m1, m3, m5, m10, m15 = st.columns(5)
-        m1.metric("1-Year", f"{blended_stats[1]:.2%}")
-        m3.metric("3-Year", f"{blended_stats[3]:.2%}")
-        m5.metric("5-Year", f"{blended_stats[5]:.2%}")
-        m10.metric("10-Year", f"{blended_stats[10]:.2%}")
-        m15.metric("15-Year", f"{blended_stats[15]:.2%}")
+        cols = st.columns(5)
+        labels = ["1-Year", "3-Year", "5-Year", "10-Year", "15-Year"]
+        for i, year in enumerate(timeframes):
+            val = final_display[year]
+            if val is not None:
+                cols[i].metric(labels[i], f"{val:.2%}")
+            else:
+                cols[i].metric(labels[i], "N/A")
         
-        st.caption("*Metrics show the Weighted Average Annualized Return (CAGR) for your specific mix.*")
+        st.caption("*Metrics show the Weighted Average Annualized Return (CAGR). If an ETF is too young (e.g. FTEC < 15y), it is excluded from that specific timeframe's average to prevent errors.*")
         st.markdown("---")
 
         # --- HOLDINGS LOGIC ---
@@ -169,7 +190,7 @@ with tab1:
         else: st.warning("Could not calculate holdings. Check spelling.")
 
 # ==========================================
-# TAB 2: DIVIDEND DATA (WITH AVERAGE ROW)
+# TAB 2: DIVIDEND DATA
 # ==========================================
 with tab2:
     def get_cagr_div(end, start, years):
@@ -246,11 +267,9 @@ with tab2:
                     start_price = hist['Close'].iloc[idx]
                     end_price = price
                     
-                    # 1. Total Return
                     total_ret = (end_price - start_price) / start_price
                     metrics[f'{y}Y Total'] = total_ret
                     
-                    # 2. Annualized Return (CAGR)
                     if y > 1:
                         cagr = (end_price / start_price) ** (1 / y) - 1
                         metrics[f'{y}Y CAGR'] = cagr
