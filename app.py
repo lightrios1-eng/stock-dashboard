@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="Master Portfolio", layout="wide")
 st.title("📊 Master Portfolio: X-Ray, Dividends & Holdings")
 
-# --- BACKUP DATA BANK (Failsafe) ---
+# --- BACKUP DATA BANKS (Failsafe) ---
 BACKUP_HOLDINGS = {
     "SMH": [["NVDA", 0.20], ["TSM", 0.12], ["AVGO", 0.08], ["AMD", 0.05], ["ASML", 0.05], ["LRCX", 0.04], ["MU", 0.04], ["AMAT", 0.04], ["TXN", 0.04], ["INTC", 0.03]],
     "QQQ": [["AAPL", 0.08], ["MSFT", 0.08], ["NVDA", 0.07], ["AMZN", 0.05], ["META", 0.04], ["AVGO", 0.04], ["GOOGL", 0.03], ["GOOG", 0.03], ["TSLA", 0.02], ["COST", 0.02]],
@@ -17,13 +17,22 @@ BACKUP_HOLDINGS = {
     "FTEC": [["AAPL", 0.21], ["MSFT", 0.19], ["NVDA", 0.15], ["AVGO", 0.05], ["CRM", 0.02], ["ADBE", 0.02], ["ORCL", 0.02], ["AMD", 0.02], ["ACN", 0.02], ["CSCO", 0.01]],
     "VOO": [["MSFT", 0.07], ["AAPL", 0.06], ["NVDA", 0.06], ["AMZN", 0.03], ["META", 0.02], ["GOOGL", 0.02], ["GOOG", 0.01], ["AVGO", 0.01], ["LLY", 0.01], ["TSLA", 0.01]],
     "SPY": [["MSFT", 0.07], ["AAPL", 0.06], ["NVDA", 0.06], ["AMZN", 0.03], ["META", 0.02], ["GOOGL", 0.02], ["GOOG", 0.01], ["AVGO", 0.01], ["LLY", 0.01], ["TSLA", 0.01]],
-    "VGT": [["AAPL", 0.16], ["MSFT", 0.16], ["NVDA", 0.13], ["AVGO", 0.04], ["CRM", 0.02], ["ACN", 0.02], ["ADBE", 0.02], ["AMD", 0.02], ["CSCO", 0.01], ["INTC", 0.01]]
+    "VGT": [["AAPL", 0.16], ["MSFT", 0.16], ["NVDA", 0.13], ["AVGO", 0.04], ["CRM", 0.02], ["ACN", 0.02], ["ADBE", 0.02], ["AMD", 0.02], ["CSCO", 0.01], ["INTC", 0.01]],
+    "VYM": [["JPM", 0.03], ["AVGO", 0.03], ["XOM", 0.03], ["JNJ", 0.02], ["HD", 0.02], ["PG", 0.02], ["COST", 0.02], ["ABBV", 0.02], ["MRK", 0.02], ["CVX", 0.01]],
+    "SCHD": [["ABBV", 0.04], ["AVGO", 0.04], ["CVX", 0.04], ["KO", 0.04], ["PEP", 0.04], ["MRK", 0.04], ["HD", 0.04], ["TXN", 0.04], ["CSCO", 0.04], ["AMGN", 0.04]]
+}
+
+# Approx 10Y CAGR backup (As of 2026)
+BACKUP_CAGR = {
+    "SMH": 0.285, "QQQ": 0.182, "MGK": 0.195, "SCHG": 0.188, 
+    "FTEC": 0.205, "VOO": 0.128, "SPY": 0.128, "VGT": 0.192, 
+    "VYM": 0.095, "SCHD": 0.115, "JEPQ": 0.105
 }
 
 # --- TABS ---
 tab1, tab2, tab3 = st.tabs(["🚀 Portfolio X-Ray", "📈 Dividend & Growth Data", "🔍 Multi-ETF Deep Dive"])
 
-# --- SHARED HELPER: GOOG MERGER ---
+# --- SHARED HELPERS ---
 def merge_google(df, symbol_col='Symbol', weight_col='Weight'):
     """Combines GOOG and GOOGL into a single entry."""
     df = df.copy()
@@ -32,7 +41,21 @@ def merge_google(df, symbol_col='Symbol', weight_col='Weight'):
     df = df.sort_values(by=weight_col, ascending=False).reset_index(drop=True)
     return df
 
-# --- HELPER: ROBUST HOLDINGS ---
+def get_cagr_robust(ticker):
+    """Calculates 10Y CAGR. Falls back to backup dict if Yahoo fails."""
+    try:
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="10y", auto_adjust=True)
+        if not hist.empty and len(hist) > 200:
+            start_price = hist['Close'].iloc[0]
+            end_price = hist['Close'].iloc[-1]
+            years = (hist.index[-1] - hist.index[0]).days / 365.25
+            if years > 0:
+                return (end_price / start_price) ** (1 / years) - 1
+    except: pass
+    if ticker in BACKUP_CAGR: return BACKUP_CAGR[ticker]
+    return 0.0
+
 def get_holdings_robust(ticker):
     stock = yf.Ticker(ticker)
     try:
@@ -44,7 +67,6 @@ def get_holdings_robust(ticker):
             df.columns = ['Symbol', 'Raw_Weight']
             return df, "Live Data"
     except: pass
-
     if ticker in BACKUP_HOLDINGS:
         data = BACKUP_HOLDINGS[ticker]
         df = pd.DataFrame(data, columns=['Symbol', 'Raw_Weight'])
@@ -71,28 +93,47 @@ with tab1:
             total_weight += w
 
     if st.button("Analyze Blended Holdings"):
-        all_holdings = []
-        status_text = []
+        st.markdown("### 📈 Blended Performance")
+        blended_cagr = 0
+        perf_data = []
         
         for ticker in etf_list:
-            df, source = get_holdings_robust(ticker)
-            
-            if not df.empty:
-                df['Portfolio_Weight'] = df['Raw_Weight'] * weights[ticker]
-                all_holdings.append(df)
-                if source == "Backup Data":
-                    status_text.append(f"⚠️ {ticker}: Used backup data.")
-            else:
-                status_text.append(f"❌ {ticker}: No data found.")
+            weight = weights[ticker]
+            if weight > 0:
+                cagr = get_cagr_robust(ticker)
+                weighted_cagr = cagr * weight
+                blended_cagr += weighted_cagr
+                perf_data.append({
+                    "Ticker": ticker,
+                    "Allocation": f"{weight*100:.0f}%",
+                    "10Y CAGR (Annualized)": f"{cagr:.2%}"
+                })
+        
+        c_perf1, c_perf2 = st.columns([1, 2])
+        with c_perf1:
+            st.metric(label="Blended 10Y CAGR", value=f"{blended_cagr:.2%}")
+            st.caption("*Weighted average of historical 10-year annualized returns.*")
+        with c_perf2:
+            st.dataframe(pd.DataFrame(perf_data), hide_index=True)
 
-        if status_text:
-            st.caption(" | ".join(status_text))
+        st.markdown("---")
+
+        all_holdings = []
+        status_text = []
+        for ticker in etf_list:
+            if weights[ticker] > 0:
+                df, source = get_holdings_robust(ticker)
+                if not df.empty:
+                    df['Portfolio_Weight'] = df['Raw_Weight'] * weights[ticker]
+                    all_holdings.append(df)
+                    if source == "Backup Data": status_text.append(f"⚠️ {ticker}: Used backup data.")
+                else: status_text.append(f"❌ {ticker}: No data found.")
+
+        if status_text: st.caption(" | ".join(status_text))
 
         if all_holdings:
             full_df = pd.concat(all_holdings)
-            # Merge GOOG
-            full_df['Symbol'] = full_df['Symbol'].replace({'GOOG': 'GOOG/L', 'GOOGL': 'GOOG/L'})
-            
+            full_df = merge_google(full_df, symbol_col='Symbol', weight_col='Portfolio_Weight')
             grouped = full_df.groupby('Symbol')['Portfolio_Weight'].sum().reset_index()
             grouped = grouped.sort_values(by='Portfolio_Weight', ascending=False)
             grouped['Weight %'] = (grouped['Portfolio_Weight'] * 100).round(2)
@@ -104,11 +145,10 @@ with tab1:
                 st.plotly_chart(fig, use_container_width=True)
             with c2:
                 st.dataframe(grouped[['Symbol', 'Weight %']].head(20), height=500)
-        else:
-            st.warning("Could not calculate holdings. Check spelling.")
+        else: st.warning("Could not calculate holdings. Check spelling.")
 
 # ==========================================
-# TAB 2: DIVIDEND DATA (FIXED YIELD FWD)
+# TAB 2: DIVIDEND DATA (WITH AVERAGE ROW)
 # ==========================================
 with tab2:
     def get_cagr(end, start, years):
@@ -145,29 +185,19 @@ with tab2:
         if hist.empty: return None
         price = hist['Close'].iloc[-1]
         
-        # --- 1. TTM Yield (The Accurate One) ---
         if not div_hist.empty:
             now = pd.Timestamp.now().tz_localize(div_hist.index.dtype.tz)
             ttm_divs = div_hist[div_hist.index >= (now - pd.Timedelta(days=365))].sum()
             yield_ttm = ttm_divs / price
         else: yield_ttm = 0
         
-        # --- 2. Forward Yield (The Fix) ---
         quote_type = info.get('quoteType', '').upper()
-        
-        # RULE: If it's an ETF, "Forward Yield" is usually garbage data from Yahoo.
-        # So we default ETF Forward Yield to be the same as TTM Yield.
-        if 'ETF' in quote_type:
-            yield_fwd = yield_ttm
+        if 'ETF' in quote_type: yield_fwd = yield_ttm
         else:
-            # If it's a COMPANY, calculate real forward yield
             rate = info.get('dividendRate', 0)
-            if rate and rate > 0: 
-                yield_fwd = rate / price
+            if rate and rate > 0: yield_fwd = rate / price
             else:
-                # Fallback Logic
                 raw = info.get('dividendYield', 0)
-                # If yahoo gives 0.05, that's 5%. If yahoo gives 5.0, that's 500% (wrong).
                 if raw > 0.25: yield_fwd = raw / 100
                 else: yield_fwd = raw
 
@@ -225,20 +255,34 @@ with tab2:
         
         if data:
             df = pd.DataFrame(data)
+            
+            # --- CALCULATE AVERAGE ROW ---
+            numeric_cols = ['Yield (TTM)', 'Yield (Fwd)', '1Y Return', '3Y Return', '5Y Return', 
+                            '10Y Return', '15Y Return', '3Y Div CAGR', '5Y Div CAGR', '10Y Div CAGR', '15Y Div CAGR']
+            
+            avg_data = {col: df[col].mean() for col in numeric_cols if col in df.columns}
+            avg_data['Ticker'] = "AVERAGE"
+            avg_data['Price'] = None # No average price
+            
+            # Create Average Row and Append
+            df_avg = pd.DataFrame([avg_data])
+            df_final = pd.concat([df, df_avg], ignore_index=True)
+            
             cols = [
                 'Ticker', 'Price', 'Streak', 'Freq', 'Yield (TTM)', 'Yield (Fwd)', 'Ex-Div', 'Payout',
                 '1Y Return', '3Y Return', '5Y Return', '10Y Return', '15Y Return',
                 '3Y Div CAGR', '5Y Div CAGR', '10Y Div CAGR', '15Y Div CAGR'
             ]
-            final_cols = [c for c in cols if c in df.columns]
-            df = df[final_cols]
+            final_cols = [c for c in cols if c in df_final.columns]
+            df_final = df_final[final_cols]
             
             fmt = {
                 'Price':'${:.2f}', 'Yield (TTM)':'{:.2%}', 'Yield (Fwd)':'{:.2%}', 
                 '1Y Return':'{:.2%}', '3Y Return':'{:.2%}', '5Y Return':'{:.2%}', '10Y Return':'{:.2%}', '15Y Return':'{:.2%}',
                 '3Y Div CAGR':'{:.2%}', '5Y Div CAGR':'{:.2%}', '10Y Div CAGR':'{:.2%}', '15Y Div CAGR':'{:.2%}'
             }
-            st.dataframe(df.style.format(fmt, na_rep="-"), height=600)
+            st.dataframe(df_final.style.format(fmt, na_rep="-"), height=600)
+            st.caption("*The 'AVERAGE' row assumes an equal-weight investment in all tickers listed above.*")
 
 # ==========================================
 # TAB 3: MULTI-ETF INSPECTION
