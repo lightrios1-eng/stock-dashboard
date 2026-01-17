@@ -10,8 +10,9 @@ st.title("📊 Master Portfolio: X-Ray, Dividends & Holdings")
 
 # --- DATA BANKS ---
 
-# 1. Sector Map
+# 1. Sector Map (General Grouping)
 SECTOR_MAP = {
+    # Tech
     "NVDA": "Technology", "MSFT": "Technology", "AAPL": "Technology", "AVGO": "Technology",
     "ORCL": "Technology", "ADBE": "Technology", "CRM": "Technology", "AMD": "Technology",
     "QCOM": "Technology", "TXN": "Technology", "INTC": "Technology", "AMAT": "Technology",
@@ -19,65 +20,152 @@ SECTOR_MAP = {
     "KLAC": "Technology", "SNPS": "Technology", "CDNS": "Technology", "PANW": "Technology",
     "NOW": "Technology", "PLTR": "Technology", "ASML": "Technology", "TSM": "Technology",
     "NXPI": "Technology", "MPH": "Technology", "ON": "Technology", "MCHP": "Technology",
-    "FTEC": "Technology", "VGT": "Technology", "SMH": "Technology", "XLK": "Technology",
+    "CSCO": "Technology", "ANET": "Technology", "HPQ": "Technology", "DELL": "Technology",
+    "CRWD": "Technology", "FTNT": "Technology", "ZS": "Technology", "NET": "Technology",
+    
+    # Comm Services
     "GOOG": "Communication", "GOOGL": "Communication", "GOOG/L": "Communication",
     "META": "Communication", "NFLX": "Communication", "DIS": "Communication",
     "CMCSA": "Communication", "TMUS": "Communication", "VZ": "Communication",
     "T": "Communication", "CHTR": "Communication", "EA": "Communication",
+    "TTWO": "Communication", "WBD": "Communication", "FOX": "Communication",
+    
+    # Cons Cyclical
     "AMZN": "Cons. Cyclical", "TSLA": "Cons. Cyclical", "HD": "Cons. Cyclical",
     "MCD": "Cons. Cyclical", "NKE": "Cons. Cyclical", "SBUX": "Cons. Cyclical",
     "LOW": "Cons. Cyclical", "BKNG": "Cons. Cyclical", "TJX": "Cons. Cyclical",
     "F": "Cons. Cyclical", "GM": "Cons. Cyclical", "TGT": "Cons. Cyclical",
+    "MAR": "Cons. Cyclical", "HLT": "Cons. Cyclical", "ABNB": "Cons. Cyclical",
+    
+    # Healthcare
     "LLY": "Healthcare", "UNH": "Healthcare", "JNJ": "Healthcare", "MRK": "Healthcare",
     "ABBV": "Healthcare", "TMO": "Healthcare", "PFE": "Healthcare", "AMGN": "Healthcare",
     "DHR": "Healthcare", "ISRG": "Healthcare", "ELV": "Healthcare", "BMY": "Healthcare",
+    "CVS": "Healthcare", "CI": "Healthcare", "SYK": "Healthcare", "ZTS": "Healthcare",
+    
+    # Financials
     "JPM": "Financial", "V": "Financial", "MA": "Financial", "BAC": "Financial",
     "WFC": "Financial", "MS": "Financial", "GS": "Financial", "BLK": "Financial",
     "SPGI": "Financial", "AXP": "Financial", "C": "Financial", "BRK.B": "Financial",
+    "USB": "Financial", "PNC": "Financial", "CB": "Financial", "MMC": "Financial",
+    
+    # Cons Defensive
     "WMT": "Cons. Defensive", "PG": "Cons. Defensive", "COST": "Cons. Defensive",
     "KO": "Cons. Defensive", "PEP": "Cons. Defensive", "PM": "Cons. Defensive",
     "MO": "Cons. Defensive", "CL": "Cons. Defensive", "KMB": "Cons. Defensive",
+    "EL": "Cons. Defensive", "GIS": "Cons. Defensive", "K": "Cons. Defensive",
+    
+    # Industrials
     "CAT": "Industrials", "UNP": "Industrials", "HON": "Industrials", "GE": "Industrials",
     "UPS": "Industrials", "BA": "Industrials", "LMT": "Industrials", "RTX": "Industrials",
-    "DE": "Industrials", "MMM": "Industrials",
+    "DE": "Industrials", "MMM": "Industrials", "ADP": "Industrials", "GD": "Industrials",
+    "NOC": "Industrials", "LHX": "Industrials", "WM": "Industrials", "ETN": "Industrials",
+    
+    # Energy
     "XOM": "Energy", "CVX": "Energy", "COP": "Energy", "SLB": "Energy", "EOG": "Energy",
-    "PLD": "Real Estate", "AMT": "Real Estate", "CCI": "Real Estate",
-    "NEE": "Utilities", "DUK": "Utilities", "SO": "Utilities"
+    "MPC": "Energy", "PSX": "Energy", "VLO": "Energy", "OXY": "Energy",
+    
+    # Real Estate
+    "PLD": "Real Estate", "AMT": "Real Estate", "CCI": "Real Estate", "O": "Real Estate",
+    "SPG": "Real Estate", "VICI": "Real Estate", "DLR": "Real Estate", "EQIX": "Real Estate",
+    
+    # Utilities
+    "NEE": "Utilities", "DUK": "Utilities", "SO": "Utilities", "AEP": "Utilities",
+    "D": "Utilities", "EXC": "Utilities", "SRE": "Utilities"
 }
 
-# 2. Industry Map (Detailed)
+# 2. Industry Map (Ultra-Specific)
 INDUSTRY_MAP = {
-    "NVDA": "Semiconductors", "TSM": "Semiconductors", "AVGO": "Semiconductors",
-    "AMD": "Semiconductors", "ASML": "Semiconductors", "LRCX": "Semiconductors",
-    "MU": "Semiconductors", "AMAT": "Semiconductors", "TXN": "Semiconductors",
-    "INTC": "Semiconductors", "QCOM": "Semiconductors", "ADI": "Semiconductors",
-    "NXPI": "Semiconductors", "ON": "Semiconductors", "MCHP": "Semiconductors",
-    "MSFT": "Software - Infra", "ORCL": "Software - Infra", "ADBE": "Software - Infra",
-    "CRM": "Software - App", "SNPS": "Software - Infra", "CDNS": "Software - Infra",
-    "PANW": "Software - Infra", "NOW": "Software - App", "PLTR": "Software - App",
-    "AAPL": "Consumer Electronics", "HPQ": "Computer Hardware", "DELL": "Computer Hardware",
-    "GOOG": "Internet Content", "GOOGL": "Internet Content", "GOOG/L": "Internet Content",
-    "META": "Internet Content", "NFLX": "Entertainment", "DIS": "Entertainment",
-    "AMZN": "Internet Retail", "TSLA": "Auto Manufacturers", "F": "Auto Manufacturers",
-    "GM": "Auto Manufacturers", "HD": "Home Improvement", "LOW": "Home Improvement",
-    "MCD": "Restaurants", "SBUX": "Restaurants", "NKE": "Footwear & Accessories",
-    "BKNG": "Travel Services", "TJX": "Apparel Retail", "TGT": "Discount Stores",
-    "WMT": "Discount Stores", "COST": "Discount Stores", "PG": "Household Personal",
-    "KO": "Beverages", "PEP": "Beverages", "PM": "Tobacco", "MO": "Tobacco",
-    "LLY": "Drug Mfr - General", "JNJ": "Drug Mfr - General", "MRK": "Drug Mfr - General",
-    "ABBV": "Drug Mfr - General", "PFE": "Drug Mfr - General", "BMY": "Drug Mfr - General",
-    "UNH": "Healthcare Plans", "ELV": "Healthcare Plans", "CVS": "Healthcare Plans",
-    "JPM": "Banks - Diversified", "BAC": "Banks - Diversified", "WFC": "Banks - Diversified",
-    "C": "Banks - Diversified", "MS": "Capital Markets", "GS": "Capital Markets",
-    "BLK": "Asset Management", "V": "Credit Services", "MA": "Credit Services",
-    "AXP": "Credit Services", "SPGI": "Financial Data",
-    "CAT": "Farm & Heavy Const", "DE": "Farm & Heavy Const", "BA": "Aerospace & Defense",
-    "LMT": "Aerospace & Defense", "RTX": "Aerospace & Defense", "GE": "Specialty Ind Mach",
-    "UNP": "Railroads", "UPS": "Integrated Freight", "HON": "Conglomerates",
-    "XOM": "Oil & Gas Integrated", "CVX": "Oil & Gas Integrated", "COP": "Oil & Gas E&P",
-    "SLB": "Oil & Gas Equip", "EOG": "Oil & Gas E&P",
-    "PLD": "REIT - Industrial", "AMT": "REIT - Specialty", "CCI": "REIT - Specialty",
-    "NEE": "Utilities - Reg", "DUK": "Utilities - Reg", "SO": "Utilities - Reg"
+    # --- SEMICONDUCTORS ---
+    "NVDA": "Semi - GPU/AI Logic", "AMD": "Semi - CPU/GPU Logic",
+    "INTC": "Semi - Manufacturing (IDM)", "TSM": "Semi - Foundry (Mfg)",
+    "AVGO": "Semi - Networking/Radio", "QCOM": "Semi - Mobile/Communications",
+    "MU": "Semi - Memory (DRAM/NAND)", "TXN": "Semi - Analog/Embedded",
+    "ADI": "Semi - Analog", "NXPI": "Semi - Automotive",
+    "ON": "Semi - Power/Auto", "STM": "Semi - Microcontrollers",
+    "MCHP": "Semi - Microcontrollers", "MPWR": "Semi - Power Management",
+    
+    # --- SEMI EQUIPMENT ---
+    "ASML": "Semi Equip - Lithography", "AMAT": "Semi Equip - Materials Eng",
+    "LRCX": "Semi Equip - Etch/Deposition", "KLAC": "Semi Equip - Process Control",
+    "TER": "Semi Equip - Testing", "ENTG": "Semi Equip - Materials",
+
+    # --- SOFTWARE & CLOUD ---
+    "MSFT": "Cloud & OS Infrastructure", "ORCL": "Cloud & Database",
+    "ADBE": "Creative Content Software", "CRM": "Enterprise CRM",
+    "NOW": "Enterprise Workflow", "PLTR": "Data Analytics/Defense",
+    "SNPS": "Chip Design Software (EDA)", "CDNS": "Chip Design Software (EDA)",
+    "PANW": "Cybersecurity", "CRWD": "Cybersecurity", "FTNT": "Cybersecurity",
+    "ZS": "Cybersecurity - Cloud", "NET": "Cloud Networking/Security",
+    "DDOG": "Cloud Monitoring", "MDB": "Database Software",
+
+    # --- HARDWARE & NETWORKING ---
+    "AAPL": "Consumer Electronics", "CSCO": "Networking Hardware",
+    "ANET": "Cloud Networking", "HPQ": "PC/Printers", "DELL": "Server/Storage",
+    "IBM": "IT Services & Consulting", "STX": "Data Storage", "WDC": "Data Storage",
+
+    # --- INTERNET & MEDIA ---
+    "GOOG": "Search & Digital Ads", "GOOGL": "Search & Digital Ads",
+    "GOOG/L": "Search & Digital Ads", "META": "Social Media & Ads",
+    "NFLX": "Streaming Entertainment", "DIS": "Media Conglomerate",
+    "WBD": "Media & Streaming", "CMCSA": "Cable & Broadband",
+    "TMUS": "Wireless Telecom", "VZ": "Telecom Services", "T": "Telecom Services",
+
+    # --- E-COMMERCE & SERVICES ---
+    "AMZN": "E-Commerce & Cloud (AWS)", "BKNG": "Online Travel",
+    "ABNB": "Lodging Platform", "UBER": "Rideshare & Logistics",
+    "DASH": "Food Delivery", "EBAY": "Online Marketplace",
+
+    # --- AUTO ---
+    "TSLA": "EV Manufacturer", "F": "Legacy Auto Manufacturer",
+    "GM": "Legacy Auto Manufacturer", "RIVN": "EV Manufacturer",
+
+    # --- RETAIL & CONSUMER ---
+    "HD": "Home Improvement Retail", "LOW": "Home Improvement Retail",
+    "WMT": "Big Box Retail", "TGT": "Big Box Retail", "COST": "Membership Warehouses",
+    "MCD": "Fast Food Restaurants", "SBUX": "Coffee Chain",
+    "NKE": "Athletic Footwear", "LULU": "Apparel", "TJX": "Off-Price Retail",
+    "PG": "Household Basics", "KO": "Non-Alcoholic Bev", "PEP": "Bev & Snacks",
+    "PM": "Tobacco", "MO": "Tobacco",
+
+    # --- FINANCIALS ---
+    "JPM": "Global Universal Bank", "BAC": "Consumer Banking",
+    "WFC": "Consumer Banking", "C": "Global Banking",
+    "MS": "Investment Banking", "GS": "Investment Banking",
+    "BLK": "Asset Management (ETFs)", "V": "Payment Network",
+    "MA": "Payment Network", "AXP": "Credit Card Issuer",
+    "PYPL": "Digital Payments", "SQ": "Fintech / Payments",
+    "SPGI": "Financial Data/Ratings", "MCO": "Financial Data/Ratings",
+    "BRK.B": "Conglomerate / Insurance",
+
+    # --- HEALTHCARE ---
+    "LLY": "Pharma (Diabetes/Weight)", "NVO": "Pharma (Diabetes/Weight)",
+    "JNJ": "Pharma & MedTech", "MRK": "Pharma (Oncology)",
+    "PFE": "Pharma (Vaccines)", "ABBV": "Biopharma (Immunology)",
+    "AMGN": "Biotech", "VRTX": "Biotech", "GILD": "Biotech",
+    "UNH": "Health Insurance", "ELV": "Health Insurance", "CVS": "Pharmacy & Insurance",
+    "ISRG": "Robotic Surgery", "SYK": "Medical Devices", "MDT": "Medical Devices",
+    "TMO": "Lab Instruments", "DHR": "Life Sciences",
+
+    # --- INDUSTRIAL & DEFENSE ---
+    "LMT": "Aerospace & Defense", "RTX": "Aerospace & Defense",
+    "NOC": "Aerospace & Defense", "GD": "Aerospace & Defense",
+    "BA": "Aerospace (Commercial)", "GE": "Jet Engines / Power",
+    "CAT": "Construction Machinery", "DE": "Agricultural Machinery",
+    "UNP": "Railroad", "CSX": "Railroad", "UPS": "Package Delivery",
+    "FDX": "Package Delivery", "HON": "Industrial Conglomerate",
+    "WM": "Waste Management",
+
+    # --- ENERGY ---
+    "XOM": "Integrated Oil & Gas", "CVX": "Integrated Oil & Gas",
+    "COP": "Oil Exploration", "EOG": "Oil Exploration",
+    "SLB": "Oilfield Services", "HAL": "Oilfield Services",
+    "MPC": "Oil Refining", "PSX": "Oil Refining",
+
+    # --- REAL ESTATE ---
+    "PLD": "Logistics REIT", "AMT": "Cell Tower REIT", "CCI": "Cell Tower REIT",
+    "EQIX": "Data Center REIT", "DLR": "Data Center REIT",
+    "O": "Retail REIT", "VICI": "Casino/Gaming REIT", "SPG": "Mall REIT"
 }
 
 # 3. Backup Holdings (Failsafe)
@@ -126,9 +214,7 @@ def get_sector(ticker):
 
 def get_industry(ticker):
     """Returns industry from map or defaults to Sector."""
-    if ticker in INDUSTRY_MAP:
-        return INDUSTRY_MAP[ticker]
-    # Fallback to sector if industry not found, or generic "ETF/Fund"
+    if ticker in INDUSTRY_MAP: return INDUSTRY_MAP[ticker]
     return SECTOR_MAP.get(ticker, "ETF / Fund")
 
 def get_inception_date(ticker, info=None):
@@ -186,7 +272,7 @@ def get_holdings_robust(ticker):
     return pd.DataFrame(), "Failed"
 
 # ==========================================
-# TAB 1: PORTFOLIO X-RAY (WITH SECTORS & INDUSTRIES)
+# TAB 1: PORTFOLIO X-RAY
 # ==========================================
 with tab1:
     st.header("See what you actually own")
@@ -205,7 +291,6 @@ with tab1:
             total_weight += w
 
     if st.button("Analyze Blended Holdings"):
-        # --- PERFORMANCE METRICS ---
         st.markdown("### 📈 Blended Performance (Annualized)")
         timeframes = [1, 3, 5, 10, 15]
         blended_stats = {year: 0.0 for year in timeframes}
@@ -272,7 +357,7 @@ with tab1:
             
             c1, c2 = st.columns([2, 1])
             with c1:
-                # TREEMAP WITH SECTORS
+                # TREEMAP
                 fig = px.treemap(
                     grouped.head(40), 
                     path=[px.Constant("Portfolio"), 'Sector', 'Symbol'], 
@@ -284,12 +369,12 @@ with tab1:
                 st.plotly_chart(fig, use_container_width=True)
                 
             with c2:
-                # Added Industry Column here
+                # Industry Column
                 st.dataframe(grouped[['Symbol', 'Sector', 'Industry', 'Weight %']].head(20), height=500)
         else: st.warning("Could not calculate holdings. Check spelling.")
 
 # ==========================================
-# TAB 2: DIVIDEND DATA (WITH INDUSTRY)
+# TAB 2: DIVIDEND DATA
 # ==========================================
 with tab2:
     def get_cagr_div(end, start, years):
@@ -347,11 +432,11 @@ with tab2:
         
         streak, freq = get_streak_and_freq(div_hist)
         inc_date = get_inception_date(ticker, info)
-        industry = get_industry(ticker) # Fetch Industry
+        industry = get_industry(ticker)
 
         metrics = {
             'Ticker': ticker, 'Price': price, 
-            'Industry': industry, # ADDED
+            'Industry': industry,
             'Inception': inc_date,
             'Yield (TTM)': yield_ttm, 'Yield (Fwd)': yield_fwd,
             'Streak': streak, 'Freq': freq,
