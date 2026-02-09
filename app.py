@@ -214,7 +214,7 @@ def get_streak_and_freq(div_hist):
 
 def get_full_stats(ticker):
     """
-    THE MASTER FUNCTION: Returns Total Returns & CAGR (incl. dividends), Yields, and Div Growth.
+    THE MASTER FUNCTION: Returns Returns, CAGR, AND Dividend Metrics.
     auto_adjust=True ensures Total Return (Dividends Reinvested).
     """
     stock = yf.Ticker(ticker)
@@ -434,7 +434,7 @@ with tab1:
         else: st.warning("Could not calculate holdings.")
 
 # ==========================================
-# TAB 2: PORTFOLIO vs MARKET
+# TAB 2: PORTFOLIO vs MARKET (UNLOCKED & FIXED)
 # ==========================================
 with tab2:
     st.header("🆚 Portfolio vs. Benchmark")
@@ -617,7 +617,11 @@ with tab5:
             cols = [
                 'Ticker', 'Price', 'Industry', 'Yield (Fwd)', 
                 '1D', '1W', 'YTD', 
-                '1Y Total', '3Y Total', '3Y CAGR', '5Y Total', '5Y CAGR', '10Y Total', '10Y CAGR', '15Y Total', '15Y CAGR',
+                '1Y Total', 
+                '3Y Total', '3Y CAGR', 
+                '5Y Total', '5Y CAGR', 
+                '10Y Total', '10Y CAGR', 
+                '15Y Total', '15Y CAGR',
                 '3Y Div CAGR', '10Y Div CAGR'
             ]
             final_cols = [c for c in cols if c in df_w.columns]
