@@ -156,7 +156,7 @@ BACKUP_INCEPTION = {
 # --- TABS ---
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🚀 Portfolio X-Ray", 
-    "🆚 Portfolio vs. Market", 
+    "🆚 Portfolio vs. Benchmark", 
     "📈 Dividend & Growth", 
     "🔍 Multi-ETF Deep Dive", 
     "👀 Watchlist",
@@ -215,6 +215,7 @@ def get_streak_and_freq(div_hist):
 def get_full_stats(ticker):
     """
     THE MASTER FUNCTION: Returns Total Returns & CAGR (incl. dividends), Yields, and Div Growth.
+    auto_adjust=True ensures Total Return (Dividends Reinvested).
     """
     stock = yf.Ticker(ticker)
     try:
@@ -434,7 +435,7 @@ with tab1:
         else: st.warning("Could not calculate holdings.")
 
 # ==========================================
-# TAB 2: PORTFOLIO vs MARKET (UNLOCKED & FULL DATA)
+# TAB 2: PORTFOLIO vs MARKET (UNLOCKED & FIXED)
 # ==========================================
 with tab2:
     st.header("🆚 Portfolio vs. Benchmark")
@@ -467,6 +468,7 @@ with tab2:
             df_p = pd.DataFrame(p_stats)
             
             # --- CALCULATE PORTFOLIO AVERAGE ROW ---
+            # Added 15Y metrics here explicitly
             numeric_cols = [
                 'Yield (TTM)', 'Yield (Fwd)', 
                 '1D', '1W', '1M', 'YTD',
@@ -493,6 +495,7 @@ with tab2:
             
             # Visual Bar Chart (CAGR Comparison)
             st.markdown("### 📊 Annualized Return (CAGR) Comparison")
+            # Added 15Y CAGR to chart
             chart_cols = ['1Y Total', '3Y CAGR', '5Y CAGR', '10Y CAGR', '15Y CAGR']
             chart_data = []
             
@@ -566,6 +569,7 @@ with tab3:
             fmt['Price'] = '${:.2f}'
             
             st.dataframe(df_final.style.format(fmt, na_rep="-"), height=600)
+            st.info("ℹ️ **Note on SPY vs VOO:** SPY is a UIT (Unit Investment Trust) while VOO is an Open-Ended Fund. SPY cannot reinvest dividends immediately (cash drag), leading to slightly lower historical returns and dividend growth compared to VOO, despite tracking the same index.")
 
 # ==========================================
 # TAB 4: MULTI-ETF INSPECTION
@@ -615,10 +619,7 @@ with tab5:
                 'Ticker', 'Price', 'Industry', 'Yield (Fwd)', 
                 '1D', '1W', 'YTD', 
                 '1Y Total', 
-                '3Y Total', '3Y CAGR', 
-                '5Y Total', '5Y CAGR', 
-                '10Y Total', '10Y CAGR', 
-                '15Y Total', '15Y CAGR',
+                '3Y CAGR', '5Y CAGR', '10Y CAGR', '15Y CAGR',
                 '3Y Div CAGR', '10Y Div CAGR'
             ]
             final_cols = [c for c in cols if c in df_w.columns]
@@ -631,11 +632,11 @@ with tab5:
             st.warning("No data found for tickers.")
 
 # ==========================================
-# TAB 6: AI NEWS (SMART FEED - NO LINKS)
+# TAB 6: AI NEWS (SMART FEED - CATEGORIZED)
 # ==========================================
 with tab6:
     st.header("📰 AI News & Smart Feed")
-    st.info("Gathering live intelligence on your portfolio and watchlist...")
+    st.info("Aggregating live news for your entire portfolio and watchlist...")
     
     # 1. Combine Portfolio + Watchlist
     all_tickers = list(set(DEFAULT_PORTFOLIO.split(',') + DEFAULT_WATCHLIST.split(',')))
@@ -644,7 +645,6 @@ with tab6:
     # 2. Fetch News
     news_feed = []
     
-    # Progress bar because fetching news for 10+ tickers takes a second
     progress_text = "Scanning market news..."
     my_bar = st.progress(0, text=progress_text)
     
@@ -675,30 +675,34 @@ with tab6:
         df_news = pd.DataFrame(news_feed)
         df_news = df_news.sort_values(by='Time', ascending=False)
         
+        # Drop duplicates based on Title to avoid spam
+        df_news = df_news.drop_duplicates(subset=['Title'])
+        
         # Date Logic
         today = datetime.now().date()
         week_ago = today - timedelta(days=7)
         month_ago = today - timedelta(days=30)
+        year_ago = today - timedelta(days=365)
         
         # Buckets
         daily = df_news[df_news['Time'].dt.date == today]
         weekly = df_news[(df_news['Time'].dt.date < today) & (df_news['Time'].dt.date >= week_ago)]
         monthly = df_news[(df_news['Time'].dt.date < week_ago) & (df_news['Time'].dt.date >= month_ago)]
+        older = df_news[(df_news['Time'].dt.date < month_ago) & (df_news['Time'].dt.date >= year_ago)]
         
         # Display Function
         def display_news_section(title, df):
             if not df.empty:
                 st.subheader(title)
                 for index, row in df.iterrows():
-                    # Format: TICKER - Title (Publisher)
-                    # We make the Title a link but keep it clean
                     st.markdown(f"**{row['Ticker']}** | [{row['Title']}]({row['Link']})")
-                    st.caption(f"Source: {row['Publisher']} • {row['Time'].strftime('%I:%M %p')}")
+                    st.caption(f"Source: {row['Publisher']} • {row['Time'].strftime('%Y-%m-%d %H:%M')}")
                     st.markdown("---")
 
         display_news_section("🌞 News for the Day", daily)
         display_news_section("📅 News for the Week", weekly)
         display_news_section("🗓️ News for the Month", monthly)
+        display_news_section("📜 News for the Year", older)
         
     else:
         st.warning("No recent news found for your tickers.")
