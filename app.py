@@ -10,7 +10,7 @@ st.title("📊 Master Portfolio: Light Rios Edition")
 
 # --- DEFAULT CONSTANTS ---
 DEFAULT_PORTFOLIO = "SCHG, QQQ, VGT, SMH"
-DEFAULT_BENCHMARK = "SPY"
+DEFAULT_BENCHMARK = "VOO, SCHD"  # Changed from SPY
 DEFAULT_WATCHLIST = "SCHD, VYM, VIG, VOO, SCHG, QQQ, VGT, SMH, VIG"
 
 # --- DATA BANKS ---
@@ -163,7 +163,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📰 AI News & Insights"
 ])
 
-# --- SHARED HELPERS (THE CORE ENGINE) ---
+# --- SHARED HELPERS ---
 def merge_google(df, symbol_col='Symbol', weight_col='Weight'):
     df = df.copy()
     df[symbol_col] = df[symbol_col].replace({'GOOG': 'GOOG/L', 'GOOGL': 'GOOG/L'})
@@ -219,7 +219,6 @@ def get_full_stats(ticker):
     """
     stock = yf.Ticker(ticker)
     try:
-        # auto_adjust=True calculates TOTAL RETURN (Price + Divs)
         hist = stock.history(period="max", auto_adjust=True)
         div_hist = stock.dividends
         info = stock.info
@@ -435,7 +434,7 @@ with tab1:
         else: st.warning("Could not calculate holdings.")
 
 # ==========================================
-# TAB 2: PORTFOLIO vs MARKET (UNLOCKED & FIXED)
+# TAB 2: PORTFOLIO vs MARKET
 # ==========================================
 with tab2:
     st.header("🆚 Portfolio vs. Benchmark")
@@ -597,7 +596,7 @@ with tab4:
             else: st.error(f"Could not fetch holdings for {target}.")
 
 # ==========================================
-# TAB 5: WATCHLIST (FIXED: ALL DATA ADDED)
+# TAB 5: WATCHLIST (FIXED: 15Y ADDED)
 # ==========================================
 with tab5:
     st.header("👀 Watchlist & Consideration")
@@ -618,8 +617,7 @@ with tab5:
             cols = [
                 'Ticker', 'Price', 'Industry', 'Yield (Fwd)', 
                 '1D', '1W', 'YTD', 
-                '1Y Total', 
-                '3Y CAGR', '5Y CAGR', '10Y CAGR', '15Y CAGR',
+                '1Y Total', '3Y Total', '3Y CAGR', '5Y Total', '5Y CAGR', '10Y Total', '10Y CAGR', '15Y Total', '15Y CAGR',
                 '3Y Div CAGR', '10Y Div CAGR'
             ]
             final_cols = [c for c in cols if c in df_w.columns]
@@ -632,7 +630,7 @@ with tab5:
             st.warning("No data found for tickers.")
 
 # ==========================================
-# TAB 6: AI NEWS (SMART FEED - CATEGORIZED)
+# TAB 6: AI NEWS (HYBRID MODE)
 # ==========================================
 with tab6:
     st.header("📰 AI News & Smart Feed")
@@ -642,9 +640,8 @@ with tab6:
     all_tickers = list(set(DEFAULT_PORTFOLIO.split(',') + DEFAULT_WATCHLIST.split(',')))
     all_tickers = [x.strip().upper() for x in all_tickers if x.strip()]
     
-    # 2. Fetch News
+    # 2. Fetch News (Text)
     news_feed = []
-    
     progress_text = "Scanning market news..."
     my_bar = st.progress(0, text=progress_text)
     
@@ -670,27 +667,25 @@ with tab6:
         
     my_bar.empty()
     
-    # 3. Sort & Group
+    # 3. Display Logic
     if news_feed:
         df_news = pd.DataFrame(news_feed)
         df_news = df_news.sort_values(by='Time', ascending=False)
         
-        # Drop duplicates based on Title to avoid spam
+        # Drop duplicates based on Title
         df_news = df_news.drop_duplicates(subset=['Title'])
         
-        # Date Logic
+        # Date Buckets
         today = datetime.now().date()
         week_ago = today - timedelta(days=7)
         month_ago = today - timedelta(days=30)
         year_ago = today - timedelta(days=365)
         
-        # Buckets
         daily = df_news[df_news['Time'].dt.date == today]
         weekly = df_news[(df_news['Time'].dt.date < today) & (df_news['Time'].dt.date >= week_ago)]
         monthly = df_news[(df_news['Time'].dt.date < week_ago) & (df_news['Time'].dt.date >= month_ago)]
         older = df_news[(df_news['Time'].dt.date < month_ago) & (df_news['Time'].dt.date >= year_ago)]
         
-        # Display Function
         def display_news_section(title, df):
             if not df.empty:
                 st.subheader(title)
@@ -703,6 +698,12 @@ with tab6:
         display_news_section("📅 News for the Week", weekly)
         display_news_section("🗓️ News for the Month", monthly)
         display_news_section("📜 News for the Year", older)
-        
     else:
-        st.warning("No recent news found for your tickers.")
+        st.warning("No live headlines found. Using backup links below.")
+
+    # 4. FALLBACK LINKS (Always Visible at Bottom)
+    st.markdown("### 🔗 Direct Research Links (Deep Dive)")
+    st.caption("Use these if you need more details than the headlines above.")
+    
+    for t in all_tickers:
+        st.markdown(f"**{t}**: [Google Search: Why is {t} moving?](https://www.google.com/search?q=why+is+{t}+stock+moving+today) | [Yahoo Finance News](https://finance.yahoo.com/quote/{t}/news)")
