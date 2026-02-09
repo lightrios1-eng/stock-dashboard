@@ -11,7 +11,7 @@ st.title("📊 Master Portfolio: Light Rios Edition")
 # --- DEFAULT CONSTANTS ---
 DEFAULT_PORTFOLIO = "SCHG, QQQ, VGT, SMH"
 DEFAULT_BENCHMARK = "SPY"
-DEFAULT_WATCHLIST = "SCHD, VYM, VIG, VOO, SCHG, QQQ, VGT, SMH"
+DEFAULT_WATCHLIST = "SCHD, VYM, VIG, VOO, SCHG, QQQ, VGT, SMH, VIG"
 
 # --- DATA BANKS ---
 SECTOR_MAP = {
@@ -156,14 +156,14 @@ BACKUP_INCEPTION = {
 # --- TABS ---
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🚀 Portfolio X-Ray", 
-    "🆚 Portfolio vs. Market", 
+    "🆚 Portfolio vs. Benchmark", 
     "📈 Dividend & Growth", 
     "🔍 Multi-ETF Deep Dive", 
     "👀 Watchlist",
     "📰 AI News & Insights"
 ])
 
-# --- SHARED HELPERS (THE CORE ENGINE) ---
+# --- SHARED HELPERS ---
 def merge_google(df, symbol_col='Symbol', weight_col='Weight'):
     df = df.copy()
     df[symbol_col] = df[symbol_col].replace({'GOOG': 'GOOG/L', 'GOOGL': 'GOOG/L'})
@@ -213,7 +213,10 @@ def get_streak_and_freq(div_hist):
     return streak, freq
 
 def get_full_stats(ticker):
-    """THE MASTER FUNCTION: Returns Returns, CAGR, AND Dividend Metrics."""
+    """
+    THE MASTER FUNCTION: Returns Returns (CAGR w/ Divs), Yields, and Div Growth.
+    auto_adjust=True ensures Total Return (Dividends Reinvested).
+    """
     stock = yf.Ticker(ticker)
     try:
         hist = stock.history(period="max", auto_adjust=True)
@@ -431,17 +434,16 @@ with tab1:
         else: st.warning("Could not calculate holdings.")
 
 # ==========================================
-# TAB 2: PORTFOLIO vs MARKET (NOW WITH FULL DIVIDENDS)
+# TAB 2: PORTFOLIO vs MARKET (FIXED: 15Y ADDED)
 # ==========================================
 with tab2:
     st.header("🆚 Portfolio vs. Benchmark")
-    st.caption("Compare your blended portfolio against any benchmark (SPY, VIG, etc).")
+    st.caption("Compare your blended portfolio against any benchmark (SPY, VIG, etc). Returns include reinvested dividends.")
     
     col_p, col_m = st.columns(2)
     with col_p:
         port_tickers = st.text_input("Your Portfolio:", value=DEFAULT_PORTFOLIO)
     with col_m:
-        # User requested flexible benchmark input
         market_ticker = st.text_input("Benchmark(s) (comma separated):", value=DEFAULT_BENCHMARK)
         
     if st.button("Compare Performance"):
@@ -465,6 +467,7 @@ with tab2:
             df_m = pd.DataFrame(m_stats)
             
             # --- CALCULATE PORTFOLIO AVERAGE ROW ---
+            # Added 15Y metrics here explicitly
             numeric_cols = [
                 'Yield (TTM)', 'Yield (Fwd)', 
                 '1D', '1W', '1M', 'YTD',
@@ -478,13 +481,11 @@ with tab2:
             avg_p = {col: df_p[col].mean() for col in numeric_cols if col in df_p.columns}
             avg_p['Ticker'] = "YOUR PORTFOLIO (Avg)"
             
-            # Combine everything: Portfolio Avg + Benchmarks
             rows = [avg_p]
             rows.extend(m_stats)
             
             df_final = pd.DataFrame(rows)
             
-            # Formatting Columns
             cols_to_show = ['Ticker'] + numeric_cols
             final_cols = [c for c in cols_to_show if c in df_final.columns]
             df_final = df_final[final_cols]
@@ -494,15 +495,14 @@ with tab2:
             
             # Visual Bar Chart (CAGR Comparison)
             st.markdown("### 📊 CAGR Comparison")
-            chart_cols = ['1Y Total', '3Y CAGR', '5Y CAGR', '10Y CAGR']
+            # Added 15Y CAGR to chart
+            chart_cols = ['1Y Total', '3Y CAGR', '5Y CAGR', '10Y CAGR', '15Y CAGR']
             chart_data = []
             
-            # Add Portfolio Data
             for c in chart_cols:
                 if c in avg_p:
                     chart_data.append({'Period': c, 'Return': avg_p[c], 'Type': 'Your Portfolio'})
             
-            # Add Benchmark Data
             for m in m_stats:
                 for c in chart_cols:
                     if c in m:
@@ -517,7 +517,7 @@ with tab2:
             st.error("Could not fetch data.")
 
 # ==========================================
-# TAB 3: DIVIDEND DATA (RESTORED TO GLORY)
+# TAB 3: DIVIDEND DATA
 # ==========================================
 with tab3:
     st.header("📈 Dividend & Growth Data")
@@ -535,7 +535,6 @@ with tab3:
         if data:
             df = pd.DataFrame(data)
             
-            # Average Row
             numeric_cols = [
                 'Yield (TTM)', 'Yield (Fwd)', 
                 '1D', '1W', '1M', 'YTD',
@@ -553,7 +552,6 @@ with tab3:
             df_avg = pd.DataFrame([avg_data])
             df_final = pd.concat([df, df_avg], ignore_index=True)
             
-            # Organize Columns
             cols = [
                 'Ticker', 'Price', 'Industry', 'Inception', 'Streak', 'Freq', 'Yield (TTM)', 'Yield (Fwd)', 'Ex-Div', 'Payout',
                 '1D', '1W', '1M', 'YTD',
@@ -598,7 +596,7 @@ with tab4:
             else: st.error(f"Could not fetch holdings for {target}.")
 
 # ==========================================
-# TAB 5: WATCHLIST (FIXED TO SHOW ALL DATA)
+# TAB 5: WATCHLIST (FIXED TO SHOW 15Y)
 # ==========================================
 with tab5:
     st.header("👀 Watchlist & Consideration")
@@ -614,11 +612,11 @@ with tab5:
         if data:
             df_w = pd.DataFrame(data)
             
-            # Use same detailed columns as Dividend Tab
+            # Added 15Y metrics here explicitly
             cols = [
                 'Ticker', 'Price', 'Industry', 'Yield (Fwd)', 
                 '1D', '1W', 'YTD', 
-                '1Y Total', '3Y CAGR', '5Y CAGR', '10Y CAGR', 
+                '1Y Total', '3Y CAGR', '5Y CAGR', '10Y CAGR', '15Y CAGR',
                 '3Y Div CAGR', '10Y Div CAGR'
             ]
             final_cols = [c for c in cols if c in df_w.columns]
@@ -631,41 +629,35 @@ with tab5:
             st.warning("No data found for tickers.")
 
 # ==========================================
-# TAB 6: AI NEWS & INSIGHTS (LIVE HEADLINES)
+# TAB 6: AI NEWS & INSIGHTS (IMPROVED LINKS)
 # ==========================================
 with tab6:
     st.header("📰 AI News & Insights")
-    st.info("💡 **Note:** Real-time AI reading of articles requires a paid API key. Below is a live feed of headlines fetched directly from Yahoo Finance for your specific holdings.")
+    st.caption("Curated links to top financial sources for your specific holdings.")
     
     tickers = [x.strip().upper() for x in DEFAULT_PORTFOLIO.split(',')]
     
-    # 1. Top Movers Logic
-    st.subheader("🚀 Top Movers & Why")
-    # We fetch basic quote to see who is moving
-    movers = []
-    for t in tickers:
-        stock = yf.Ticker(t)
-        try:
-            hist = stock.history(period="2d")
-            if len(hist) > 1:
-                change = (hist['Close'].iloc[-1] - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2]
-                movers.append((t, change, stock.news))
-        except: pass
-        
-    # Sort by absolute move size
-    movers.sort(key=lambda x: abs(x[1]), reverse=True)
+    # 1. Top Holdings News
+    st.subheader("🚀 Top Holdings (The Movers)")
+    key_stocks = ["NVDA", "AAPL", "MSFT", "AVGO", "TSLA", "META", "GOOGL"]
     
-    for t, change, news in movers:
-        color = "green" if change > 0 else "red"
-        st.markdown(f"### **{t}** :{color}[{change:.2%}]")
-        
-        # Display Top 3 Headlines
-        if news:
-            for article in news[:3]:
-                title = article.get('title', 'No Title')
-                link = article.get('link', '#')
-                publisher = article.get('publisher', 'Unknown')
-                st.markdown(f"- [{title}]({link}) _({publisher})_")
-        else:
-            st.caption("No recent news found.")
-        st.markdown("---")
+    c1, c2 = st.columns(2)
+    with c1:
+        for stock in key_stocks[:4]:
+            st.markdown(f"**{stock}**")
+            st.markdown(f"• [🔍 Google: Why is {stock} moving?](https://www.google.com/search?q=why+is+{stock}+stock+moving+today)")
+            st.markdown(f"• [Yahoo Finance News](https://finance.yahoo.com/quote/{stock}/news)")
+            st.markdown("---")
+            
+    with c2:
+        for stock in key_stocks[4:]:
+            st.markdown(f"**{stock}**")
+            st.markdown(f"• [🔍 Google: Why is {stock} moving?](https://www.google.com/search?q=why+is+{stock}+stock+moving+today)")
+            st.markdown(f"• [Yahoo Finance News](https://finance.yahoo.com/quote/{stock}/news)")
+            st.markdown("---")
+
+    # 2. ETF Specific News
+    st.subheader("📊 Your ETFs")
+    for etf in tickers:
+        st.markdown(f"**{etf}**")
+        st.markdown(f"[Seeking Alpha Analysis](https://seekingalpha.com/symbol/{etf}) | [Etf.com Profile](https://www.etf.com/{etf}) | [🔍 Google News](https://www.google.com/search?q={etf}+etf+news)")
