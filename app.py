@@ -6,11 +6,11 @@ from datetime import datetime, timedelta
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Master Portfolio", layout="wide")
-st.title("📊 Master Portfolio: X-Ray, Dividends & Holdings")
+st.title("📊 Master Portfolio: Light Rios Edition")
 
 # --- DATA BANKS ---
 
-# 1. Sector Map (General Grouping)
+# 1. Sector Map
 SECTOR_MAP = {
     # Tech
     "NVDA": "Technology", "MSFT": "Technology", "AAPL": "Technology", "AVGO": "Technology",
@@ -20,6 +20,7 @@ SECTOR_MAP = {
     "KLAC": "Technology", "SNPS": "Technology", "CDNS": "Technology", "PANW": "Technology",
     "NOW": "Technology", "PLTR": "Technology", "ASML": "Technology", "TSM": "Technology",
     "NXPI": "Technology", "MPH": "Technology", "ON": "Technology", "MCHP": "Technology",
+    "FTEC": "Technology", "VGT": "Technology", "SMH": "Technology", "XLK": "Technology",
     "CSCO": "Technology", "ANET": "Technology", "HPQ": "Technology", "DELL": "Technology",
     "CRWD": "Technology", "FTNT": "Technology", "ZS": "Technology", "NET": "Technology",
     
@@ -74,7 +75,7 @@ SECTOR_MAP = {
     "D": "Utilities", "EXC": "Utilities", "SRE": "Utilities"
 }
 
-# 2. Industry Map (Ultra-Specific)
+# 2. Industry Map
 INDUSTRY_MAP = {
     # --- SEMICONDUCTORS ---
     "NVDA": "Semi - GPU/AI Logic", "AMD": "Semi - CPU/GPU Logic",
@@ -163,12 +164,12 @@ INDUSTRY_MAP = {
     "MPC": "Oil Refining", "PSX": "Oil Refining",
 
     # --- REAL ESTATE ---
-    "PLD": "Logistics REIT", "AMT": "Cell Tower REIT", "CCI": "Cell Tower REIT",
+    "PLD": "REIT - Industrial", "AMT": "Cell Tower REIT", "CCI": "Cell Tower REIT",
     "EQIX": "Data Center REIT", "DLR": "Data Center REIT",
     "O": "Retail REIT", "VICI": "Casino/Gaming REIT", "SPG": "Mall REIT"
 }
 
-# 3. Backup Holdings (Failsafe)
+# 3. Backup Holdings
 BACKUP_HOLDINGS = {
     "SMH": [["NVDA", 0.20], ["TSM", 0.12], ["AVGO", 0.08], ["AMD", 0.05], ["ASML", 0.05], ["LRCX", 0.04], ["MU", 0.04], ["AMAT", 0.04], ["TXN", 0.04], ["INTC", 0.03]],
     "QQQ": [["AAPL", 0.08], ["MSFT", 0.08], ["NVDA", 0.07], ["AMZN", 0.05], ["META", 0.04], ["AVGO", 0.04], ["GOOGL", 0.03], ["GOOG", 0.03], ["TSLA", 0.02], ["COST", 0.02]],
@@ -198,11 +199,17 @@ BACKUP_INCEPTION = {
 }
 
 # --- TABS ---
-tab1, tab2, tab3 = st.tabs(["🚀 Portfolio X-Ray", "📈 Dividend & Growth Data", "🔍 Multi-ETF Deep Dive"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "🚀 Portfolio X-Ray", 
+    "🆚 Portfolio vs. Market", 
+    "📈 Dividend & Growth", 
+    "🔍 Multi-ETF Deep Dive", 
+    "👀 Watchlist",
+    "📰 AI News & Insights"
+])
 
 # --- SHARED HELPERS ---
 def merge_google(df, symbol_col='Symbol', weight_col='Weight'):
-    """Combines GOOG and GOOGL into a single entry."""
     df = df.copy()
     df[symbol_col] = df[symbol_col].replace({'GOOG': 'GOOG/L', 'GOOGL': 'GOOG/L'})
     df = df.groupby(symbol_col, as_index=False)[weight_col].sum()
@@ -213,7 +220,6 @@ def get_sector(ticker):
     return SECTOR_MAP.get(ticker, "Other / Diversified")
 
 def get_industry(ticker):
-    """Returns industry from map or defaults to Sector."""
     if ticker in INDUSTRY_MAP: return INDUSTRY_MAP[ticker]
     return SECTOR_MAP.get(ticker, "ETF / Fund")
 
@@ -271,12 +277,63 @@ def get_holdings_robust(ticker):
         return df, "Backup Data"
     return pd.DataFrame(), "Failed"
 
+def get_period_return(hist, price, days):
+    """Calculates return for a specific day period."""
+    if len(hist) > days:
+        start_price = hist['Close'].iloc[-(days+1)]
+        return (price - start_price) / start_price
+    return None
+
+def get_perf_stats(ticker):
+    stock = yf.Ticker(ticker)
+    try:
+        hist = stock.history(period="max", auto_adjust=True)
+        info = stock.info
+    except: return None
+    
+    if hist.empty: return None
+    price = hist['Close'].iloc[-1]
+    
+    metrics = {'Ticker': ticker, 'Price': price}
+    
+    # Short Term
+    metrics['1D'] = get_period_return(hist, price, 1)
+    metrics['1W'] = get_period_return(hist, price, 5)
+    metrics['1M'] = get_period_return(hist, price, 21)
+    
+    # YTD
+    current_year = datetime.now().year
+    ytd_start = f"{current_year}-01-01"
+    hist_ytd = hist[hist.index >= pd.Timestamp(ytd_start).tz_localize(hist.index.dtype.tz)]
+    if not hist_ytd.empty:
+        metrics['YTD'] = (price - hist_ytd['Open'].iloc[0]) / hist_ytd['Open'].iloc[0]
+    else: metrics['YTD'] = None
+
+    # Long Term (CAGR)
+    curr_date = hist.index[-1]
+    for y in [1, 3, 5, 10, 15]:
+        target = curr_date - timedelta(days=y*365)
+        idx_loc = hist.index.get_indexer([target], method='nearest')
+        if len(idx_loc) > 0:
+            idx = idx_loc[0]
+            if abs((hist.index[idx] - target).days) < 100:
+                start_price = hist['Close'].iloc[idx]
+                if y == 1:
+                    metrics[f'{y}Y'] = (price - start_price) / start_price # Total return for 1Y
+                else:
+                    metrics[f'{y}Y'] = (price / start_price) ** (1 / y) - 1 # CAGR
+            else: metrics[f'{y}Y'] = None
+        else: metrics[f'{y}Y'] = None
+        
+    return metrics
+
 # ==========================================
 # TAB 1: PORTFOLIO X-RAY
 # ==========================================
 with tab1:
     st.header("See what you actually own")
-    default_etfs = "SMH, QQQ, MGK, SCHG, FTEC"
+    # Updated Default
+    default_etfs = "SCHG, QQQ, VGT, SMH"
     etf_input = st.text_input("Enter ETFs to Blend (comma separated):", value=default_etfs)
     etf_list = [x.strip().upper() for x in etf_input.split(',')]
 
@@ -295,19 +352,10 @@ with tab1:
         timeframes = [1, 3, 5, 10, 15]
         blended_stats = {year: 0.0 for year in timeframes}
         valid_weights = {year: 0.0 for year in timeframes}
-        perf_table_data = []
         
         for ticker in etf_list:
             weight = weights[ticker]
             if weight > 0:
-                inc_date = get_inception_date(ticker)
-                cagr_10 = get_cagr_for_year(ticker, 10)
-                perf_table_data.append({
-                    "Ticker": ticker,
-                    "Allocation": f"{weight*100:.0f}%",
-                    "Inception": inc_date,
-                    "10Y CAGR": f"{cagr_10:.2%}" if cagr_10 else "N/A"
-                })
                 for year in timeframes:
                     cagr = get_cagr_for_year(ticker, year)
                     if cagr is not None:
@@ -326,23 +374,15 @@ with tab1:
             val = final_display[year]
             cols[i].metric(labels[i], f"{val:.2%}" if val is not None else "N/A")
         
-        st.caption("*Weighted Average CAGR. ETFs too young for a timeframe are excluded.*")
-        st.dataframe(pd.DataFrame(perf_table_data), hide_index=True)
         st.markdown("---")
 
-        # --- HOLDINGS & SECTOR TREEMAP ---
         all_holdings = []
-        status_text = []
         for ticker in etf_list:
             if weights[ticker] > 0:
                 df, source = get_holdings_robust(ticker)
                 if not df.empty:
                     df['Portfolio_Weight'] = df['Raw_Weight'] * weights[ticker]
                     all_holdings.append(df)
-                    if source == "Backup Data": status_text.append(f"⚠️ {ticker}: Used backup data.")
-                else: status_text.append(f"❌ {ticker}: No data found.")
-
-        if status_text: st.caption(" | ".join(status_text))
 
         if all_holdings:
             full_df = pd.concat(all_holdings)
@@ -350,14 +390,12 @@ with tab1:
             grouped = full_df.groupby('Symbol')['Portfolio_Weight'].sum().reset_index()
             grouped = grouped.sort_values(by='Portfolio_Weight', ascending=False)
             
-            # --- MAP SECTORS & INDUSTRY ---
             grouped['Sector'] = grouped['Symbol'].apply(get_sector)
             grouped['Industry'] = grouped['Symbol'].apply(get_industry)
             grouped['Weight %'] = (grouped['Portfolio_Weight'] * 100).round(2)
             
             c1, c2 = st.columns([2, 1])
             with c1:
-                # TREEMAP
                 fig = px.treemap(
                     grouped.head(40), 
                     path=[px.Constant("Portfolio"), 'Sector', 'Symbol'], 
@@ -369,14 +407,97 @@ with tab1:
                 st.plotly_chart(fig, use_container_width=True)
                 
             with c2:
-                # Industry Column
                 st.dataframe(grouped[['Symbol', 'Sector', 'Industry', 'Weight %']].head(20), height=500)
-        else: st.warning("Could not calculate holdings. Check spelling.")
+        else: st.warning("Could not calculate holdings.")
 
 # ==========================================
-# TAB 2: DIVIDEND DATA
+# TAB 2: PORTFOLIO vs MARKET
 # ==========================================
 with tab2:
+    st.header("🆚 Portfolio vs. S&P 500")
+    st.caption("Comparing your blended portfolio against the Market (SPY).")
+    
+    # Inputs
+    col_p, col_m = st.columns(2)
+    with col_p:
+        port_tickers = st.text_input("Your Portfolio:", value="SCHG, QQQ, VGT, SMH")
+    with col_m:
+        market_ticker = st.text_input("Benchmark:", value="SPY")
+        
+    if st.button("Compare Performance"):
+        tickers = [x.strip().upper() for x in port_tickers.split(',')]
+        
+        # 1. Get Market Stats
+        market_stats = get_perf_stats(market_ticker)
+        
+        # 2. Get Portfolio Stats (Equal Weight Assumption for simplicity or 25% each)
+        # For true accuracy we'd use weights, here we assume equal split of listed tickers
+        port_stats_list = []
+        for t in tickers:
+            s = get_perf_stats(t)
+            if s: port_stats_list.append(s)
+            
+        if market_stats and port_stats_list:
+            df_p = pd.DataFrame(port_stats_list)
+            
+            # Calculate Portfolio Average
+            numeric_cols = ['1D', '1W', '1M', 'YTD', '1Y', '3Y', '5Y', '10Y', '15Y']
+            port_avg = {}
+            for col in numeric_cols:
+                if col in df_p.columns:
+                    port_avg[col] = df_p[col].mean()
+                else: port_avg[col] = None
+            
+            # Build Comparison Table
+            comp_data = []
+            
+            # Row 1: Your Portfolio
+            row_p = {'Type': 'Your Portfolio'}
+            row_p.update(port_avg)
+            comp_data.append(row_p)
+            
+            # Row 2: Market
+            row_m = {'Type': f"Market ({market_ticker})"}
+            for col in numeric_cols:
+                row_m[col] = market_stats.get(col)
+            comp_data.append(row_m)
+            
+            # Row 3: Difference
+            row_d = {'Type': 'Difference (+/-)'}
+            for col in numeric_cols:
+                if row_p[col] is not None and row_m[col] is not None:
+                    row_d[col] = row_p[col] - row_m[col]
+                else: row_d[col] = None
+            comp_data.append(row_d)
+            
+            df_comp = pd.DataFrame(comp_data)
+            
+            # Formatting
+            fmt = {c: '{:.2%}' for c in numeric_cols}
+            st.dataframe(df_comp.style.format(fmt, na_rep="-"), hide_index=True)
+            
+            # Visual Bar Chart for 3Y/5Y/10Y
+            st.markdown("### 📊 Long Term Comparison")
+            long_term_cols = ['1Y', '3Y', '5Y', '10Y']
+            long_term_data = []
+            for col in long_term_cols:
+                long_term_data.append({'Period': col, 'Return': port_avg[col], 'Source': 'Portfolio'})
+                long_term_data.append({'Period': col, 'Return': market_stats.get(col), 'Source': 'Market'})
+            
+            df_chart = pd.DataFrame(long_term_data).dropna()
+            fig = px.bar(df_chart, x='Period', y='Return', color='Source', barmode='group', title="Annualized Returns Comparison")
+            st.plotly_chart(fig, use_container_width=True)
+            
+        else:
+            st.error("Could not fetch data. Check tickers.")
+
+# ==========================================
+# TAB 3: DIVIDEND DATA
+# ==========================================
+with tab3:
+    st.header("📈 Dividend & Growth Data")
+    
+    # Helper functions locally
     def get_cagr_div(end, start, years):
         if start == 0 or pd.isna(start) or pd.isna(end): return None
         return (end / start) ** (1 / years) - 1
@@ -443,7 +564,7 @@ with tab2:
             'Ex-Div': ex_div, 'Payout': payout
         }
         
-        # Short Term
+        # Returns
         if len(hist) > 1: metrics['1D'] = (price - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2]
         else: metrics['1D'] = None
         if len(hist) > 5: metrics['1W'] = (price - hist['Close'].iloc[-6]) / hist['Close'].iloc[-6]
@@ -455,11 +576,9 @@ with tab2:
         ytd_start = f"{current_year}-01-01"
         hist_ytd = hist[hist.index >= pd.Timestamp(ytd_start).tz_localize(hist.index.dtype.tz)]
         if not hist_ytd.empty:
-            start_price_ytd = hist_ytd['Open'].iloc[0]
-            metrics['YTD'] = (price - start_price_ytd) / start_price_ytd
+            metrics['YTD'] = (price - hist_ytd['Open'].iloc[0]) / hist_ytd['Open'].iloc[0]
         else: metrics['YTD'] = None
 
-        # Long Term
         curr_date = hist.index[-1]
         for y in [1, 3, 5, 10, 15]:
             target = curr_date - timedelta(days=y*365)
@@ -472,8 +591,7 @@ with tab2:
                     total_ret = (end_price - start_price) / start_price
                     metrics[f'{y}Y Total'] = total_ret
                     if y > 1:
-                        cagr = (end_price / start_price) ** (1 / y) - 1
-                        metrics[f'{y}Y CAGR'] = cagr
+                        metrics[f'{y}Y CAGR'] = (end_price / start_price) ** (1 / y) - 1
                 else: 
                     metrics[f'{y}Y Total'] = None
                     if y > 1: metrics[f'{y}Y CAGR'] = None
@@ -499,7 +617,7 @@ with tab2:
         return metrics
 
     if st.button("Update Dividends"):
-        tickers = st.text_area("Tickers", "SMH, MSFT, VYM, SCHD, VOO, QQQ, JEPQ")
+        tickers = st.text_area("Tickers", "SCHG, QQQ, VGT, SMH")
         t_list = [x.strip().upper() for x in tickers.split(',')]
         data = []
         progress = st.progress(0)
@@ -510,14 +628,7 @@ with tab2:
         
         if data:
             df = pd.DataFrame(data)
-            numeric_cols = [
-                'Yield (TTM)', 'Yield (Fwd)', 
-                '1D', '1W', '1M', 'YTD',
-                '1Y Total', '3Y Total', '3Y CAGR', 
-                '5Y Total', '5Y CAGR', '10Y Total', '10Y CAGR', 
-                '15Y Total', '15Y CAGR',
-                '3Y Div CAGR', '5Y Div CAGR', '10Y Div CAGR', '15Y Div CAGR'
-            ]
+            numeric_cols = ['Yield (TTM)', 'Yield (Fwd)', '1D', '1W', '1M', 'YTD', '1Y Total', '3Y CAGR', '5Y CAGR', '10Y CAGR', '15Y CAGR']
             avg_data = {col: df[col].mean() for col in numeric_cols if col in df.columns}
             avg_data['Ticker'] = "AVERAGE"
             avg_data['Industry'] = "-"
@@ -527,38 +638,21 @@ with tab2:
             df_avg = pd.DataFrame([avg_data])
             df_final = pd.concat([df, df_avg], ignore_index=True)
             
-            cols = [
-                'Ticker', 'Price', 'Industry', 'Inception', 'Streak', 'Freq', 'Yield (TTM)', 'Yield (Fwd)', 'Ex-Div', 'Payout',
-                '1D', '1W', '1M', 'YTD',
-                '1Y Total', 
-                '3Y Total', '3Y CAGR', 
-                '5Y Total', '5Y CAGR', 
-                '10Y Total', '10Y CAGR', 
-                '15Y Total', '15Y CAGR',
-                '3Y Div CAGR', '5Y Div CAGR', '10Y Div CAGR', '15Y Div CAGR'
-            ]
+            cols = ['Ticker', 'Price', 'Industry', 'Inception', 'Yield (Fwd)', '1D', '1W', 'YTD', '1Y Total', '3Y CAGR', '5Y CAGR', '10Y CAGR', '15Y CAGR']
             final_cols = [c for c in cols if c in df_final.columns]
             df_final = df_final[final_cols]
             
-            fmt = {
-                'Price':'${:.2f}', 'Yield (TTM)':'{:.2%}', 'Yield (Fwd)':'{:.2%}', 
-                '1D':'{:.2%}', '1W':'{:.2%}', '1M':'{:.2%}', 'YTD':'{:.2%}',
-                '1Y Total':'{:.2%}', 
-                '3Y Total':'{:.2%}', '3Y CAGR':'{:.2%}',
-                '5Y Total':'{:.2%}', '5Y CAGR':'{:.2%}',
-                '10Y Total':'{:.2%}', '10Y CAGR':'{:.2%}',
-                '15Y Total':'{:.2%}', '15Y CAGR':'{:.2%}',
-                '3Y Div CAGR':'{:.2%}', '5Y Div CAGR':'{:.2%}', '10Y Div CAGR':'{:.2%}', '15Y Div CAGR':'{:.2%}'
-            }
+            fmt = {c: '{:.2%}' for c in final_cols if c not in ['Ticker', 'Industry', 'Inception', 'Price']}
+            fmt['Price'] = '${:.2f}'
+            
             st.dataframe(df_final.style.format(fmt, na_rep="-"), height=600)
-            st.caption("* 'Total' = Total percent return over the period. 'CAGR' = Annualized return per year. *")
 
 # ==========================================
-# TAB 3: MULTI-ETF INSPECTION
+# TAB 4: MULTI-ETF INSPECTION
 # ==========================================
-with tab3:
+with tab4:
     st.header("🔍 Multi-ETF Inspection")
-    target_input = st.text_input("Enter ETF Tickers (comma separated):", value="SMH, MGK, VOO")
+    target_input = st.text_input("Enter ETF Tickers:", value="SCHG, QQQ, VGT, SMH")
     
     if st.button("Analyze ETFs"):
         targets = [x.strip().upper() for x in target_input.split(',')]
@@ -575,9 +669,75 @@ with tab3:
                 df = merge_google(df, symbol_col='Holding', weight_col='Weight')
                 df['Weight'] = (df['Weight'] * 100).map('{:.2f}%'.format)
                 
-                if source == "Backup Data": st.caption(f"⚠️ Yahoo blocked the connection. Using cached backup data.")
-                else: st.caption(f"✅ Live data fetched from Yahoo Finance.")
+                if source == "Backup Data": st.caption(f"⚠️ Using backup data.")
+                else: st.caption(f"✅ Live data fetched.")
                     
                 st.write(f"**Top Holdings (GOOG merged):**")
                 st.table(df)
-            else: st.error(f"Could not fetch holdings for {target}. (Not in backup list)")
+            else: st.error(f"Could not fetch holdings for {target}.")
+
+# ==========================================
+# TAB 5: WATCHLIST
+# ==========================================
+with tab5:
+    st.header("👀 Watchlist & Consideration")
+    st.caption("Track potential additions to your portfolio. Compare their returns instantly.")
+    
+    watch_input = st.text_input("Watchlist Tickers:", value="JEPQ, SCHD, MSFT, META, PLTR")
+    
+    if st.button("Update Watchlist"):
+        tickers = [x.strip().upper() for x in watch_input.split(',')]
+        data = []
+        for t in tickers:
+            stats = get_perf_stats(t)
+            if stats: data.append(stats)
+            
+        if data:
+            df_w = pd.DataFrame(data)
+            cols = ['Ticker', 'Price', '1D', '1W', '1M', 'YTD', '1Y', '3Y', '5Y', '10Y']
+            df_w = df_w[cols]
+            fmt = {c: '{:.2%}' for c in cols if c not in ['Ticker', 'Price']}
+            fmt['Price'] = '${:.2f}'
+            st.dataframe(df_w.style.format(fmt, na_rep="-"), height=500)
+        else:
+            st.warning("No data found for tickers.")
+
+# ==========================================
+# TAB 6: AI NEWS & INSIGHTS
+# ==========================================
+with tab6:
+    st.header("📰 AI News & Insights")
+    st.caption("Quick links to explain WHY your portfolio is moving today.")
+    
+    tickers = ["SCHG", "QQQ", "VGT", "SMH"]
+    
+    st.subheader("🔎 Why is my portfolio moving?")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Top Holdings News (The Movers):**")
+        # Links to Google Finance/Yahoo for top holdings
+        key_stocks = ["NVDA", "AAPL", "MSFT", "AVGO"]
+        for stock in key_stocks:
+            st.markdown(f"- **{stock}**: [Google Finance News](https://www.google.com/finance/quote/{stock}:NASDAQ) | [Yahoo Finance](https://finance.yahoo.com/quote/{stock})")
+            
+    with c2:
+        st.markdown("**ETF Specific News:**")
+        for etf in tickers:
+            st.markdown(f"- **{etf}**: [Seeking Alpha](https://seekingalpha.com/symbol/{etf}) | [Etf.com](https://www.etf.com/{etf})")
+            
+    st.markdown("---")
+    st.markdown("### 💡 Portfolio Recommendations (AI Logic)")
+    st.info("""
+    **Bull Case for your Portfolio:**
+    - **AI Supercycle:** You are heavy in SMH (Semis) and VGT (Tech). As long as AI spending remains high (NVDA, MSFT cap-ex), your portfolio will likely outperform the S&P 500.
+    - **Interest Rate Cuts:** Growth stocks (SCHG, QQQ) tend to rally when the Fed cuts rates.
+    
+    **Bear Case / Risks:**
+    - **Concentration:** You have massive overlap in Apple, Microsoft, and Nvidia across all 4 ETFs. If Tech crashes, you have no hedge.
+    - **Valuation:** Tech P/E ratios are high. Any earnings miss could cause volatility.
+    
+    **Consider Adding:**
+    - **JEPQ / SCHD:** If you want to reduce volatility and add income.
+    - **Healthcare (LLY) / Industrials:** To diversify away from pure tech if the AI trade cools off.
+    """)
