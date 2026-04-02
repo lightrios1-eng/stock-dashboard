@@ -105,7 +105,7 @@ def get_holdings(ticker):
     return pd.DataFrame()
 
 # --- UI TABS ---
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🚀 X-Ray", "🆚 Benchmark", "📈 Dividends", "🔍 Deep Dive", "👀 Watchlist", "📰 Insights & Updates"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🚀 X-Ray", "🆚 Benchmark", "📈 Dividends", "🔍 Deep Dive", "👀 Watchlist", "📰 News & Insights"])
 
 # --- TAB 1: X-RAY ---
 with tab1:
@@ -235,6 +235,17 @@ with tab6:
         st.dataframe(format_dataframe(df_pulse), hide_index=True)
     else:
         st.warning("Could not load real-time market data.")
+
+    st.markdown("---")
+
+    st.markdown("### 🤖 1-Click Gemini Ultra Intelligence Update")
+    st.markdown("Use this payload to instantly command Gemini to generate a comprehensive Daily, Weekly, Monthly, and Annual structural review of your live holdings.")
+    
+    # Generating the dynamic prompt based on the DEFAULT_PORT variable
+    prompt_text = f"Give me a comprehensive news update about my investment portfolio. It is blended equally among: {DEFAULT_PORT}. Format with headings for Daily/Weekly (Short-Term Dynamics), Monthly (Medium-Term Trends), and Annual Outlook (Long-Term Fundamentals)."
+    
+    st.code(prompt_text, language="text")
+    st.markdown("[🔗 **Open Gemini Ultra (Click Here)**](https://gemini.google.com/app)")
 
     st.markdown("---")
 
