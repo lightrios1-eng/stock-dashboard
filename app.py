@@ -10,7 +10,7 @@ st.title("📊 Master Portfolio: Light Rios Edition")
 
 # --- DEFAULT CONSTANTS ---
 DEFAULT_PORTFOLIO = "SCHG, QQQ, VGT, SMH"
-DEFAULT_BENCHMARK = "VOO, SCHD"  # Changed from SPY
+DEFAULT_BENCHMARK = "VOO, SCHD"
 DEFAULT_WATCHLIST = "SCHD, VYM, VIG, VOO, SCHG, QQQ, VGT, SMH, VIG"
 
 # --- DATA BANKS ---
@@ -197,7 +197,7 @@ def get_cagr_div(end, start, years):
 
 def get_streak_and_freq(div_hist):
     if div_hist.empty: return 0, "-"
-    annual = div_hist.resample('Y').sum().sort_index(ascending=False)
+    annual = div_hist.resample('YE').sum().sort_index(ascending=False)
     curr_year = datetime.now().year
     streak = 0
     completed = annual[annual.index.year < curr_year]
@@ -213,10 +213,6 @@ def get_streak_and_freq(div_hist):
     return streak, freq
 
 def get_full_stats(ticker):
-    """
-    THE MASTER FUNCTION: Returns Returns, CAGR, AND Dividend Metrics.
-    auto_adjust=True ensures Total Return (Dividends Reinvested).
-    """
     stock = yf.Ticker(ticker)
     try:
         hist = stock.history(period="max", auto_adjust=True)
@@ -287,9 +283,7 @@ def get_full_stats(ticker):
             if abs((hist.index[idx] - target).days) < 100:
                 start_price = hist['Close'].iloc[idx]
                 end_price = price
-                # Total Return
                 metrics[f'{y}Y Total'] = (end_price - start_price) / start_price
-                # CAGR (Annualized) - Only for > 1 Year
                 if y > 1:
                     metrics[f'{y}Y CAGR'] = (end_price / start_price) ** (1 / y) - 1
             else: 
@@ -301,7 +295,7 @@ def get_full_stats(ticker):
 
     # --- DIVIDEND GROWTH CAGR ---
     if not div_hist.empty:
-        annual = div_hist.resample('Y').sum()
+        annual = div_hist.resample('YE').sum()
         last_year = datetime.now().year - 1
         try:
             curr_div = annual[annual.index.year == last_year].iloc[0]
@@ -434,15 +428,13 @@ with tab1:
         else: st.warning("Could not calculate holdings.")
 
 # ==========================================
-# TAB 2: PORTFOLIO vs MARKET (UNLOCKED & FIXED)
+# TAB 2: PORTFOLIO vs MARKET
 # ==========================================
 with tab2:
     st.header("🆚 Portfolio vs. Benchmark")
-    st.caption("Compare your blended portfolio against any benchmark. Returns include reinvested dividends (Total Return).")
     
     col_p, col_m = st.columns(2)
     with col_p:
-        # UNLOCKED: Editable Text Input for Your Portfolio
         port_tickers = st.text_input("Your Portfolio (Editable):", value=DEFAULT_PORTFOLIO)
     with col_m:
         market_ticker = st.text_input("Benchmark(s) (comma separated):", value=DEFAULT_BENCHMARK)
@@ -451,13 +443,11 @@ with tab2:
         p_list = [x.strip().upper() for x in port_tickers.split(',')]
         m_list = [x.strip().upper() for x in market_ticker.split(',')]
         
-        # 1. Get Portfolio Stats
         p_stats = []
         for t in p_list:
             s = get_full_stats(t)
             if s: p_stats.append(s)
             
-        # 2. Get Market Stats
         m_stats = []
         for t in m_list:
             s = get_full_stats(t)
@@ -466,8 +456,6 @@ with tab2:
         if p_stats and m_stats:
             df_p = pd.DataFrame(p_stats)
             
-            # --- CALCULATE PORTFOLIO AVERAGE ROW ---
-            # Added 15Y metrics here explicitly
             numeric_cols = [
                 'Yield (TTM)', 'Yield (Fwd)', 
                 '1D', '1W', '1M', 'YTD',
@@ -492,9 +480,7 @@ with tab2:
             fmt = {c: '{:.2%}' for c in numeric_cols}
             st.dataframe(df_final.style.format(fmt, na_rep="-"), hide_index=True)
             
-            # Visual Bar Chart (CAGR Comparison)
             st.markdown("### 📊 Annualized Return (CAGR) Comparison")
-            # Added 15Y CAGR to chart
             chart_cols = ['1Y Total', '3Y CAGR', '5Y CAGR', '10Y CAGR', '15Y CAGR']
             chart_data = []
             
@@ -568,8 +554,7 @@ with tab3:
             fmt['Price'] = '${:.2f}'
             
             st.dataframe(df_final.style.format(fmt, na_rep="-"), height=600)
-            st.info("ℹ️ **Note on SPY vs VOO:** SPY is a UIT (Unit Investment Trust) while VOO is an Open-Ended Fund. SPY cannot reinvest dividends immediately (cash drag), leading to slightly lower historical returns and dividend growth compared to VOO, despite tracking the same index.")
-
+            
 # ==========================================
 # TAB 4: MULTI-ETF INSPECTION
 # ==========================================
@@ -596,11 +581,10 @@ with tab4:
             else: st.error(f"Could not fetch holdings for {target}.")
 
 # ==========================================
-# TAB 5: WATCHLIST (FIXED: 15Y ADDED)
+# TAB 5: WATCHLIST
 # ==========================================
 with tab5:
     st.header("👀 Watchlist & Consideration")
-    # Updated Defaults as requested
     watch_input = st.text_input("Watchlist Tickers:", value=DEFAULT_WATCHLIST)
     
     if st.button("Update Watchlist"):
@@ -613,7 +597,6 @@ with tab5:
         if data:
             df_w = pd.DataFrame(data)
             
-            # Use same detailed columns as Dividend Tab including 15Y and Total Returns
             cols = [
                 'Ticker', 'Price', 'Industry', 'Yield (Fwd)', 
                 '1D', '1W', 'YTD', 
@@ -640,11 +623,9 @@ with tab6:
     st.header("📰 AI News & Smart Feed")
     st.info("Aggregating live news for your entire portfolio and watchlist...")
     
-    # 1. Combine Portfolio + Watchlist
     all_tickers = list(set(DEFAULT_PORTFOLIO.split(',') + DEFAULT_WATCHLIST.split(',')))
     all_tickers = [x.strip().upper() for x in all_tickers if x.strip()]
     
-    # 2. Fetch News (Text)
     news_feed = []
     progress_text = "Scanning market news..."
     my_bar = st.progress(0, text=progress_text)
@@ -655,7 +636,6 @@ with tab6:
             news = stock.news
             if news:
                 for article in news:
-                    # Parse timestamp
                     pub_time = article.get('providerPublishTime', 0)
                     dt = datetime.fromtimestamp(pub_time)
                     
@@ -671,15 +651,11 @@ with tab6:
         
     my_bar.empty()
     
-    # 3. Display Logic
     if news_feed:
         df_news = pd.DataFrame(news_feed)
         df_news = df_news.sort_values(by='Time', ascending=False)
-        
-        # Drop duplicates based on Title
         df_news = df_news.drop_duplicates(subset=['Title'])
         
-        # Date Buckets
         today = datetime.now().date()
         week_ago = today - timedelta(days=7)
         month_ago = today - timedelta(days=30)
@@ -703,11 +679,8 @@ with tab6:
         display_news_section("🗓️ News for the Month", monthly)
         display_news_section("📜 News for the Year", older)
     else:
-        st.warning("No live headlines found. Using backup links below.")
+        st.warning("No live headlines found. The data provider (Yahoo Finance) might be blocking the connection.")
 
-    # 4. FALLBACK LINKS (Always Visible at Bottom)
-    st.markdown("### 🔗 Direct Research Links (Deep Dive)")
-    st.caption("Use these if you need more details than the headlines above.")
-    
+    st.markdown("### 🔗 Direct Research Links (Failsafe)")
     for t in all_tickers:
         st.markdown(f"**{t}**: [Google Search: Why is {t} moving?](https://www.google.com/search?q=why+is+{t}+stock+moving+today) | [Yahoo Finance News](https://finance.yahoo.com/quote/{t}/news)")
