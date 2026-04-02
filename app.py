@@ -163,7 +163,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📰 AI News & Insights"
 ])
 
-# --- SHARED HELPERS ---
+# --- SHARED HELPERS (THE CORE ENGINE) ---
 def merge_google(df, symbol_col='Symbol', weight_col='Weight'):
     df = df.copy()
     df[symbol_col] = df[symbol_col].replace({'GOOG': 'GOOG/L', 'GOOGL': 'GOOG/L'})
@@ -197,10 +197,11 @@ def get_cagr_div(end, start, years):
 
 def get_streak_and_freq(div_hist):
     if div_hist.empty: return 0, "-"
-    annual = div_hist.resample('YE').sum().sort_index(ascending=False)
+    # FIXED: Replaced resample() with groupby() to avoid version conflicts
+    annual = div_hist.groupby(div_hist.index.year).sum().sort_index(ascending=False)
     curr_year = datetime.now().year
     streak = 0
-    completed = annual[annual.index.year < curr_year]
+    completed = annual[annual.index < curr_year]
     if len(completed) < 2: return 0, "-"
     for i in range(len(completed) - 1):
         if completed.iloc[i] > completed.iloc[i+1]: streak += 1
@@ -293,18 +294,24 @@ def get_full_stats(ticker):
             metrics[f'{y}Y Total'] = None
             if y > 1: metrics[f'{y}Y CAGR'] = None
 
-    # --- DIVIDEND GROWTH CAGR ---
+    # --- DIVIDEND GROWTH CAGR (FIXED FOR VERSION COMPATIBILITY) ---
     if not div_hist.empty:
-        annual = div_hist.resample('YE').sum()
+        annual = div_hist.groupby(div_hist.index.year).sum()
         last_year = datetime.now().year - 1
         try:
-            curr_div = annual[annual.index.year == last_year].iloc[0]
-            for y in [3, 5, 10, 15]:
-                target = last_year - y
-                try:
-                    past_div = annual[annual.index.year == target].iloc[0]
-                    metrics[f'{y}Y Div CAGR'] = get_cagr_div(curr_div, past_div, y)
-                except: metrics[f'{y}Y Div CAGR'] = None
+            if last_year in annual.index:
+                curr_div = annual.loc[last_year]
+                for y in [3, 5, 10, 15]:
+                    target = last_year - y
+                    try:
+                        if target in annual.index:
+                            past_div = annual.loc[target]
+                            metrics[f'{y}Y Div CAGR'] = get_cagr_div(curr_div, past_div, y)
+                        else:
+                            metrics[f'{y}Y Div CAGR'] = None
+                    except: metrics[f'{y}Y Div CAGR'] = None
+            else:
+                for y in [3, 5, 10, 15]: metrics[f'{y}Y Div CAGR'] = None
         except: pass
     else:
         for y in [3, 5, 10, 15]: metrics[f'{y}Y Div CAGR'] = None
@@ -403,284 +410,4 @@ with tab1:
                     all_holdings.append(df)
 
         if all_holdings:
-            full_df = pd.concat(all_holdings)
-            full_df = merge_google(full_df, symbol_col='Symbol', weight_col='Portfolio_Weight')
-            grouped = full_df.groupby('Symbol')['Portfolio_Weight'].sum().reset_index()
-            grouped = grouped.sort_values(by='Portfolio_Weight', ascending=False)
-            grouped['Sector'] = grouped['Symbol'].apply(get_sector)
-            grouped['Industry'] = grouped['Symbol'].apply(get_industry)
-            grouped['Weight %'] = (grouped['Portfolio_Weight'] * 100).round(2)
-            
-            c1, c2 = st.columns([2, 1])
-            with c1:
-                fig = px.treemap(
-                    grouped.head(40), 
-                    path=[px.Constant("Portfolio"), 'Sector', 'Symbol'], 
-                    values='Weight %',
-                    title="Portfolio Composition by Sector",
-                    color='Sector',
-                )
-                fig.update_traces(textinfo="label+value", texttemplate="%{label}<br>%{value}%")
-                st.plotly_chart(fig, use_container_width=True)
-                
-            with c2:
-                st.dataframe(grouped[['Symbol', 'Sector', 'Industry', 'Weight %']].head(20), height=500)
-        else: st.warning("Could not calculate holdings.")
-
-# ==========================================
-# TAB 2: PORTFOLIO vs MARKET
-# ==========================================
-with tab2:
-    st.header("🆚 Portfolio vs. Benchmark")
-    
-    col_p, col_m = st.columns(2)
-    with col_p:
-        port_tickers = st.text_input("Your Portfolio (Editable):", value=DEFAULT_PORTFOLIO)
-    with col_m:
-        market_ticker = st.text_input("Benchmark(s) (comma separated):", value=DEFAULT_BENCHMARK)
-        
-    if st.button("Compare Performance"):
-        p_list = [x.strip().upper() for x in port_tickers.split(',')]
-        m_list = [x.strip().upper() for x in market_ticker.split(',')]
-        
-        p_stats = []
-        for t in p_list:
-            s = get_full_stats(t)
-            if s: p_stats.append(s)
-            
-        m_stats = []
-        for t in m_list:
-            s = get_full_stats(t)
-            if s: m_stats.append(s)
-            
-        if p_stats and m_stats:
-            df_p = pd.DataFrame(p_stats)
-            
-            numeric_cols = [
-                'Yield (TTM)', 'Yield (Fwd)', 
-                '1D', '1W', '1M', 'YTD',
-                '1Y Total', '3Y Total', '3Y CAGR', 
-                '5Y Total', '5Y CAGR', '10Y Total', '10Y CAGR', 
-                '15Y Total', '15Y CAGR',
-                '3Y Div CAGR', '5Y Div CAGR', '10Y Div CAGR', '15Y Div CAGR'
-            ]
-            
-            avg_p = {col: df_p[col].mean() for col in numeric_cols if col in df_p.columns}
-            avg_p['Ticker'] = "YOUR PORTFOLIO (Avg)"
-            
-            rows = [avg_p]
-            rows.extend(m_stats)
-            
-            df_final = pd.DataFrame(rows)
-            
-            cols_to_show = ['Ticker'] + numeric_cols
-            final_cols = [c for c in cols_to_show if c in df_final.columns]
-            df_final = df_final[final_cols]
-            
-            fmt = {c: '{:.2%}' for c in numeric_cols}
-            st.dataframe(df_final.style.format(fmt, na_rep="-"), hide_index=True)
-            
-            st.markdown("### 📊 Annualized Return (CAGR) Comparison")
-            chart_cols = ['1Y Total', '3Y CAGR', '5Y CAGR', '10Y CAGR', '15Y CAGR']
-            chart_data = []
-            
-            for c in chart_cols:
-                if c in avg_p:
-                    chart_data.append({'Period': c, 'Return': avg_p[c], 'Type': 'Your Portfolio'})
-            
-            for m in m_stats:
-                for c in chart_cols:
-                    if c in m:
-                        chart_data.append({'Period': c, 'Return': m[c], 'Type': m['Ticker']})
-            
-            if chart_data:
-                df_chart = pd.DataFrame(chart_data)
-                fig = px.bar(df_chart, x='Period', y='Return', color='Type', barmode='group', title="Annualized Returns vs Benchmark")
-                st.plotly_chart(fig, use_container_width=True)
-            
-        else:
-            st.error("Could not fetch data.")
-
-# ==========================================
-# TAB 3: DIVIDEND DATA
-# ==========================================
-with tab3:
-    st.header("📈 Dividend & Growth Data")
-    
-    if st.button("Update Dividends"):
-        tickers = st.text_area("Tickers", DEFAULT_PORTFOLIO)
-        t_list = [x.strip().upper() for x in tickers.split(',')]
-        data = []
-        progress = st.progress(0)
-        for i, t in enumerate(t_list):
-            res = get_full_stats(t)
-            if res: data.append(res)
-            progress.progress((i + 1) / len(t_list))
-        
-        if data:
-            df = pd.DataFrame(data)
-            
-            numeric_cols = [
-                'Yield (TTM)', 'Yield (Fwd)', 
-                '1D', '1W', '1M', 'YTD',
-                '1Y Total', '3Y Total', '3Y CAGR', 
-                '5Y Total', '5Y CAGR', '10Y Total', '10Y CAGR', 
-                '15Y Total', '15Y CAGR',
-                '3Y Div CAGR', '5Y Div CAGR', '10Y Div CAGR', '15Y Div CAGR'
-            ]
-            avg_data = {col: df[col].mean() for col in numeric_cols if col in df.columns}
-            avg_data['Ticker'] = "AVERAGE"
-            avg_data['Industry'] = "-"
-            avg_data['Inception'] = "-"
-            avg_data['Price'] = None 
-            
-            df_avg = pd.DataFrame([avg_data])
-            df_final = pd.concat([df, df_avg], ignore_index=True)
-            
-            cols = [
-                'Ticker', 'Price', 'Industry', 'Inception', 'Streak', 'Freq', 'Yield (TTM)', 'Yield (Fwd)', 'Ex-Div', 'Payout',
-                '1D', '1W', '1M', 'YTD',
-                '1Y Total', 
-                '3Y Total', '3Y CAGR', 
-                '5Y Total', '5Y CAGR', 
-                '10Y Total', '10Y CAGR', 
-                '15Y Total', '15Y CAGR',
-                '3Y Div CAGR', '5Y Div CAGR', '10Y Div CAGR', '15Y Div CAGR'
-            ]
-            final_cols = [c for c in cols if c in df_final.columns]
-            df_final = df_final[final_cols]
-            
-            fmt = {c: '{:.2%}' for c in numeric_cols}
-            fmt['Price'] = '${:.2f}'
-            
-            st.dataframe(df_final.style.format(fmt, na_rep="-"), height=600)
-            
-# ==========================================
-# TAB 4: MULTI-ETF INSPECTION
-# ==========================================
-with tab4:
-    st.header("🔍 Multi-ETF Inspection")
-    target_input = st.text_input("Enter ETF Tickers:", value=DEFAULT_PORTFOLIO)
-    
-    if st.button("Analyze ETFs"):
-        targets = [x.strip().upper() for x in target_input.split(',')]
-        
-        for target in targets:
-            st.markdown(f"---")
-            st.markdown(f"### 🔎 Analysis for **{target}**")
-            inc_date = get_inception_date(target)
-            st.write(f"**Inception Date:** {inc_date}")
-            
-            df, source = get_holdings_robust(target)
-            if not df.empty:
-                df.columns = ['Holding', 'Weight']
-                df = merge_google(df, symbol_col='Holding', weight_col='Weight')
-                df['Weight'] = (df['Weight'] * 100).map('{:.2f}%'.format)
-                st.write(f"**Top Holdings (GOOG merged):**")
-                st.table(df)
-            else: st.error(f"Could not fetch holdings for {target}.")
-
-# ==========================================
-# TAB 5: WATCHLIST
-# ==========================================
-with tab5:
-    st.header("👀 Watchlist & Consideration")
-    watch_input = st.text_input("Watchlist Tickers:", value=DEFAULT_WATCHLIST)
-    
-    if st.button("Update Watchlist"):
-        tickers = [x.strip().upper() for x in watch_input.split(',')]
-        data = []
-        for t in tickers:
-            stats = get_full_stats(t)
-            if stats: data.append(stats)
-            
-        if data:
-            df_w = pd.DataFrame(data)
-            
-            cols = [
-                'Ticker', 'Price', 'Industry', 'Yield (Fwd)', 
-                '1D', '1W', 'YTD', 
-                '1Y Total', 
-                '3Y Total', '3Y CAGR', 
-                '5Y Total', '5Y CAGR', 
-                '10Y Total', '10Y CAGR', 
-                '15Y Total', '15Y CAGR',
-                '3Y Div CAGR', '10Y Div CAGR'
-            ]
-            final_cols = [c for c in cols if c in df_w.columns]
-            df_w = df_w[final_cols]
-            
-            fmt = {c: '{:.2%}' for c in final_cols if c not in ['Ticker', 'Price', 'Industry']}
-            fmt['Price'] = '${:.2f}'
-            st.dataframe(df_w.style.format(fmt, na_rep="-"), height=500)
-        else:
-            st.warning("No data found for tickers.")
-
-# ==========================================
-# TAB 6: AI NEWS (HYBRID MODE)
-# ==========================================
-with tab6:
-    st.header("📰 AI News & Smart Feed")
-    st.info("Aggregating live news for your entire portfolio and watchlist...")
-    
-    all_tickers = list(set(DEFAULT_PORTFOLIO.split(',') + DEFAULT_WATCHLIST.split(',')))
-    all_tickers = [x.strip().upper() for x in all_tickers if x.strip()]
-    
-    news_feed = []
-    progress_text = "Scanning market news..."
-    my_bar = st.progress(0, text=progress_text)
-    
-    for i, t in enumerate(all_tickers):
-        try:
-            stock = yf.Ticker(t)
-            news = stock.news
-            if news:
-                for article in news:
-                    pub_time = article.get('providerPublishTime', 0)
-                    dt = datetime.fromtimestamp(pub_time)
-                    
-                    news_feed.append({
-                        'Ticker': t,
-                        'Title': article.get('title'),
-                        'Publisher': article.get('publisher'),
-                        'Link': article.get('link'),
-                        'Time': dt
-                    })
-        except: pass
-        my_bar.progress((i + 1) / len(all_tickers), text=f"Scanning {t}...")
-        
-    my_bar.empty()
-    
-    if news_feed:
-        df_news = pd.DataFrame(news_feed)
-        df_news = df_news.sort_values(by='Time', ascending=False)
-        df_news = df_news.drop_duplicates(subset=['Title'])
-        
-        today = datetime.now().date()
-        week_ago = today - timedelta(days=7)
-        month_ago = today - timedelta(days=30)
-        year_ago = today - timedelta(days=365)
-        
-        daily = df_news[df_news['Time'].dt.date == today]
-        weekly = df_news[(df_news['Time'].dt.date < today) & (df_news['Time'].dt.date >= week_ago)]
-        monthly = df_news[(df_news['Time'].dt.date < week_ago) & (df_news['Time'].dt.date >= month_ago)]
-        older = df_news[(df_news['Time'].dt.date < month_ago) & (df_news['Time'].dt.date >= year_ago)]
-        
-        def display_news_section(title, df):
-            if not df.empty:
-                st.subheader(title)
-                for index, row in df.iterrows():
-                    st.markdown(f"**{row['Ticker']}** | [{row['Title']}]({row['Link']})")
-                    st.caption(f"Source: {row['Publisher']} • {row['Time'].strftime('%Y-%m-%d %H:%M')}")
-                    st.markdown("---")
-
-        display_news_section("🌞 News for the Day", daily)
-        display_news_section("📅 News for the Week", weekly)
-        display_news_section("🗓️ News for the Month", monthly)
-        display_news_section("📜 News for the Year", older)
-    else:
-        st.warning("No live headlines found. The data provider (Yahoo Finance) might be blocking the connection.")
-
-    st.markdown("### 🔗 Direct Research Links (Failsafe)")
-    for t in all_tickers:
-        st.markdown(f"**{t}**: [Google Search: Why is {t} moving?](https://www.google.com/search?q=why+is+{t}+stock+moving+today) | [Yahoo Finance News](https://finance.yahoo.com/quote/{t}/news)")
+            full_df = pd.
