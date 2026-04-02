@@ -29,6 +29,7 @@ def merge_goog(df):
     return df.groupby('Symbol', as_index=False)['Weight'].sum().sort_values(by='Weight', ascending=False)
 
 def format_dataframe(df):
+    """Safely formats floats to strings to prevent Pandas/PyArrow TypeErrors."""
     df = df.copy()
     for col in ALL_NUM_COLS:
         if col in df.columns:
@@ -105,7 +106,7 @@ def get_holdings(ticker):
     return pd.DataFrame()
 
 # --- UI TABS ---
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🚀 X-Ray", "🆚 Benchmark", "📈 Dividends", "🔍 Deep Dive", "👀 Watchlist", "📰 News & Insights"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🚀 X-Ray", "🆚 Benchmark", "📈 Dividends", "🔍 Deep Dive", "👀 Watchlist", "📰 Insights & Updates"])
 
 # --- TAB 1: X-RAY ---
 with tab1:
@@ -147,12 +148,14 @@ with tab1:
         if dfs:
             full = merge_goog(pd.concat(dfs))
             full['Weight %'] = (full['Weight'] * 100).round(2)
+            full['Industry'] = full['Symbol'].apply(lambda x: IND_MAP.get(x, "ETF/Fund"))
+            
             c1, c2 = st.columns([2,1])
             with c1: 
-                fig = px.treemap(full.head(40), path=[px.Constant("Portfolio"), 'Symbol'], values='Weight %', title="Top Holdings")
-                fig.update_traces(textinfo="label+value", texttemplate="%{label}<br>%{value:.2f}%")
+                fig = px.treemap(full.head(40), path=[px.Constant("Portfolio"), 'Symbol'], values='Weight %', custom_data=['Industry'], title="Top Holdings")
+                fig.update_traces(textinfo="label+value", texttemplate="%{label}<br>%{customdata[0]}<br>%{value:.2f}%")
                 st.plotly_chart(fig, use_container_width=True)
-            with c2: st.dataframe(full[['Symbol', 'Weight %']].head(20), height=500)
+            with c2: st.dataframe(full[['Symbol', 'Industry', 'Weight %']].head(20), height=500)
 
 # --- TAB 2: BENCHMARK ---
 with tab2:
@@ -241,7 +244,6 @@ with tab6:
     st.markdown("### 🤖 1-Click Gemini Ultra Intelligence Update")
     st.markdown("Use this payload to instantly command Gemini to generate a comprehensive Daily, Weekly, Monthly, and Annual structural review of your live holdings.")
     
-    # Generating the dynamic prompt based on the DEFAULT_PORT variable
     prompt_text = f"Give me a comprehensive news update about my investment portfolio. It is blended equally among: {DEFAULT_PORT}. Format with headings for Daily/Weekly (Short-Term Dynamics), Monthly (Medium-Term Trends), and Annual Outlook (Long-Term Fundamentals)."
     
     st.code(prompt_text, language="text")
