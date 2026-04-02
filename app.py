@@ -19,8 +19,26 @@ ALL_NUM_COLS = [
     '3Y Div CAGR', '5Y Div CAGR', '10Y Div CAGR', '15Y Div CAGR'
 ]
 
-# --- COMPACT DATA MAPS ---
-IND_MAP = {"NVDA": "Semi - GPU/AI", "AMD": "Semi - CPU/GPU", "INTC": "Semi - IDM", "TSM": "Semi - Foundry", "AVGO": "Semi - Network", "QCOM": "Semi - Mobile", "MU": "Semi - Memory", "TXN": "Semi - Analog", "ASML": "Semi Equip", "AMAT": "Semi Equip", "LRCX": "Semi Equip", "MSFT": "Cloud/OS", "ORCL": "Cloud/DB", "ADBE": "Creative Soft", "CRM": "Enterprise Soft", "AAPL": "Consumer Elec", "CSCO": "Network HW", "GOOG": "Search/Ads", "GOOGL": "Search/Ads", "META": "Social Media", "AMZN": "E-Commerce/Cloud", "TSLA": "EV Auto", "HD": "Home Improv", "WMT": "Big Box", "LLY": "Pharma", "UNH": "Health Ins", "JPM": "Bank", "V": "Payments", "LMT": "Defense", "XOM": "Oil/Gas", "PLD": "REIT", "QQQM": "Tech / Growth", "QQQ": "Tech / Growth", "VGT": "Technology"}
+# --- ULTRA-SPECIFIC DATA MAPS ---
+IND_MAP = {
+    "NVDA": "Semi - GPU/AI Logic", "AMD": "Semi - CPU/GPU", "INTC": "Semi - IDM (Mfg)", "TSM": "Semi - Foundry (Mfg)",
+    "AVGO": "Semi - Networking/RF", "QCOM": "Semi - Mobile/Comms", "MU": "Semi - Memory (DRAM/NAND)", 
+    "TXN": "Semi - Analog/Embedded", "ADI": "Semi - Analog/Mixed Signal", "NXPI": "Semi - Auto/IoT",
+    "ON": "Semi - Power/Sensors", "MCHP": "Semi - Microcontrollers", "MPWR": "Semi - Power Management",
+    "ASML": "Semi Equip - Lithography", "AMAT": "Semi Equip - Materials Eng", "LRCX": "Semi Equip - Etch/Deposition",
+    "KLAC": "Semi Equip - Process Control", "TER": "Semi Equip - Test/Measurement", "ENTG": "Semi Equip - Adv Materials",
+    "SNPS": "Software - Chip Design (EDA)", "CDNS": "Software - Chip Design (EDA)", "ARM": "Semi - IP/Architecture",
+    "MSFT": "Cloud & OS Infrastructure", "ORCL": "Cloud/DB", "ADBE": "Software - Creative", "CRM": "Software - Enterprise",
+    "AAPL": "Consumer Electronics", "CSCO": "Networking Hardware", "GOOG": "Search/Ads", "GOOGL": "Search/Ads",
+    "META": "Social Media", "AMZN": "E-Commerce/Cloud", "TSLA": "Auto Mfr - EV", "HD": "Home Improvement",
+    "WMT": "Big Box Retail", "LLY": "Pharma", "UNH": "Health Ins", "JPM": "Bank", "V": "Payments",
+    "MA": "Payments", "COST": "Warehouse Club", "NFLX": "Media - Streaming", "PEP": "Beverages",
+    "KO": "Beverages", "PANW": "Cybersecurity", "CRWD": "Cybersecurity", "NOW": "Software - IT Services",
+    "PLTR": "Data Analytics", "INTU": "Financial Soft", "ISRG": "Medical Devices", "AMGN": "Biotech",
+    "QQQM": "Tech / Growth ETF", "QQQ": "Tech / Growth ETF", "VGT": "Technology ETF", "SMH": "Semiconductor ETF",
+    "SCHG": "Growth ETF", "VOO": "S&P 500 ETF", "SCHD": "Dividend ETF", "VYM": "Dividend ETF", "VIG": "Dividend ETF"
+}
+
 B_INCEPT = {"SMH": "2011-12-20", "QQQ": "1999-03-10", "QQQM": "2020-10-13", "MGK": "2007-12-17", "SCHG": "2009-12-11", "FTEC": "2013-10-21", "VOO": "2010-09-07", "SPY": "1993-01-22", "VGT": "2004-01-26", "VYM": "2006-11-10", "SCHD": "2011-10-20", "JEPQ": "2022-05-03"}
 
 # --- CORE ENGINE ---
@@ -148,7 +166,8 @@ with tab1:
         if dfs:
             full = merge_goog(pd.concat(dfs))
             full['Weight %'] = (full['Weight'] * 100).round(2)
-            full['Industry'] = full['Symbol'].apply(lambda x: IND_MAP.get(x, "ETF/Fund"))
+            # Safely map industry, fallback to Diversified if missing to avoid "ETF/Fund" error
+            full['Industry'] = full['Symbol'].apply(lambda x: IND_MAP.get(x, "Diversified / Other"))
             
             c1, c2 = st.columns([2,1])
             with c1: 
