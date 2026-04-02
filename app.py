@@ -12,6 +12,14 @@ DEFAULT_PORT = "SCHG, QQQ, VGT, SMH"
 DEFAULT_BENCH = "VOO, SCHD"
 DEFAULT_WATCH = "SCHD, VYM, VIG, VOO, SCHG, QQQ, VGT, SMH"
 
+# Global Column Tracker to ensure no tab misses data
+ALL_NUM_COLS = [
+    'Yield (TTM)', 'Yield (Fwd)', '1D', '1W', '1M', 'YTD', 
+    '1Y Total', '3Y Total', '3Y CAGR', '5Y Total', '5Y CAGR', 
+    '10Y Total', '10Y CAGR', '15Y Total', '15Y CAGR', 
+    '3Y Div CAGR', '5Y Div CAGR', '10Y Div CAGR', '15Y Div CAGR'
+]
+
 # --- COMPACT DATA MAPS ---
 IND_MAP = {"NVDA": "Semi - GPU/AI", "AMD": "Semi - CPU/GPU", "INTC": "Semi - IDM", "TSM": "Semi - Foundry", "AVGO": "Semi - Network", "QCOM": "Semi - Mobile", "MU": "Semi - Memory", "TXN": "Semi - Analog", "ASML": "Semi Equip", "AMAT": "Semi Equip", "LRCX": "Semi Equip", "MSFT": "Cloud/OS", "ORCL": "Cloud/DB", "ADBE": "Creative Soft", "CRM": "Enterprise Soft", "AAPL": "Consumer Elec", "CSCO": "Network HW", "GOOG": "Search/Ads", "GOOGL": "Search/Ads", "META": "Social Media", "AMZN": "E-Commerce/Cloud", "TSLA": "EV Auto", "HD": "Home Improv", "WMT": "Big Box", "LLY": "Pharma", "UNH": "Health Ins", "JPM": "Bank", "V": "Payments", "LMT": "Defense", "XOM": "Oil/Gas", "PLD": "REIT"}
 B_INCEPT = {"SMH": "2011-12-20", "QQQ": "1999-03-10", "MGK": "2007-12-17", "SCHG": "2009-12-11", "FTEC": "2013-10-21", "VOO": "2010-09-07", "SPY": "1993-01-22", "VGT": "2004-01-26", "VYM": "2006-11-10", "SCHD": "2011-10-20", "JEPQ": "2022-05-03"}
@@ -35,14 +43,23 @@ def get_full_stats(ticker):
     y_ttm = div[div.index >= (pd.Timestamp.now().tz_localize(div.index.dtype.tz) - pd.Timedelta(days=365))].sum() / p if not div.empty else 0
     y_fwd = y_ttm if 'ETF' in info.get('quoteType','').upper() else info.get('dividendYield', 0)
 
-    # Initialize master dict
     m = {'Ticker': ticker, 'Price': p, 'Industry': IND_MAP.get(ticker, "ETF/Fund"), 'Inception': B_INCEPT.get(ticker, "N/A"), 'Yield (Fwd)': y_fwd, 'Yield (TTM)': y_ttm}
+
+    # Streaks
+    if not div.empty:
+        annual_div = div.groupby(div.index.year).sum()
+        completed = annual_div[annual_div.index < datetime.now().year].sort_index(ascending=False)
+        streak = next((i for i in range(len(completed)-1) if completed.iloc[i] <= completed.iloc[i+1]), len(completed)-1) if len(completed) > 1 else 0
+    else: streak = 0
+    
+    cnt = div[div.index.year == (datetime.now().year - 1)].count() if not div.empty else 0
+    m['Streak'] = streak
+    m['Freq'] = "Mo" if cnt >= 11 else "Qr" if cnt >= 3 else "Yr" if cnt >= 1 else "-"
 
     # Short Term
     m['1D'] = (p - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2] if len(hist)>1 else None
     m['1W'] = (p - hist['Close'].iloc[-6]) / hist['Close'].iloc[-6] if len(hist)>5 else None
     m['1M'] = (p - hist['Close'].iloc[-22]) / hist['Close'].iloc[-22] if len(hist)>21 else None
-    
     ytd = hist[hist.index >= pd.Timestamp(f"{datetime.now().year}-01-01").tz_localize(hist.index.dtype.tz)]
     m['YTD'] = (p - ytd['Open'].iloc[0]) / ytd['Open'].iloc[0] if not ytd.empty else None
 
@@ -60,16 +77,15 @@ def get_full_stats(ticker):
 
     # Div CAGR
     if not div.empty:
-        annual_div = div.groupby(div.index.year).sum()
         ly = datetime.now().year - 1
-        for y in [1, 3, 5, 10, 15]:
+        for y in [3, 5, 10, 15]:
             try:
                 if ly in annual_div.index and (ly-y) in annual_div.index and annual_div.loc[ly-y] > 0:
                     m[f'{y}Y Div CAGR'] = (annual_div.loc[ly] / annual_div.loc[ly-y]) ** (1/y) - 1
                 else: m[f'{y}Y Div CAGR'] = None
             except: m[f'{y}Y Div CAGR'] = None
     else:
-        for y in [1, 3, 5, 10, 15]: m[f'{y}Y Div CAGR'] = None
+        for y in [3, 5, 10, 15]: m[f'{y}Y Div CAGR'] = None
 
     return m
 
@@ -146,11 +162,13 @@ with tab2:
         m_stats = [s for s in (get_full_stats(t) for t in m_list) if s]
         if p_stats and m_stats:
             df_p = pd.DataFrame(p_stats)
-            num_cols = ['1D', '1W', '1M', 'YTD', '1Y Total', '3Y Total', '3Y CAGR', '5Y Total', '5Y CAGR', '10Y Total', '10Y CAGR', '15Y Total', '15Y CAGR']
-            avg_p = {c: df_p[c].mean() for c in num_cols if c in df_p.columns}
+            avg_p = {c: df_p[c].mean() for c in ALL_NUM_COLS if c in df_p.columns}
             avg_p['Ticker'] = "PORTFOLIO AVG"
-            final = pd.DataFrame([avg_p] + m_stats)[['Ticker'] + num_cols].dropna(axis=1, how='all')
-            st.dataframe(final.style.format({c: '{:.2%}' for c in num_cols}, na_rep="-"), hide_index=True)
+            avg_p['Inception'] = "-"
+            
+            final = pd.DataFrame([avg_p] + m_stats)[['Ticker', 'Inception'] + ALL_NUM_COLS].dropna(axis=1, how='all')
+            # Removed na_rep="-" to prevent PyArrow crashes
+            st.dataframe(final.style.format({c: '{:.2%}' for c in ALL_NUM_COLS}), hide_index=True)
 
 # --- TAB 3: DIVIDENDS ---
 with tab3:
@@ -160,13 +178,17 @@ with tab3:
         data = [s for s in (get_full_stats(t) for t in t_list) if s]
         if data:
             df = pd.DataFrame(data)
-            num_cols = ['Yield (TTM)', 'Yield (Fwd)', '1D', '1W', '1M', 'YTD', '1Y Total', '3Y Total', '3Y CAGR', '5Y Total', '5Y CAGR', '10Y Total', '10Y CAGR', '15Y Total', '15Y CAGR', '3Y Div CAGR', '5Y Div CAGR', '10Y Div CAGR', '15Y Div CAGR']
-            avg_data = {c: df[c].mean() for c in num_cols if c in df.columns}
-            avg_data.update({'Ticker': "AVERAGE", 'Inception': "-"})
+            avg_data = {c: df[c].mean() for c in ALL_NUM_COLS if c in df.columns}
+            avg_data.update({'Ticker': "AVERAGE", 'Inception': "-", 'Industry': "-", 'Price': None, 'Streak': None, 'Freq': "-"})
+            
             final = pd.concat([df, pd.DataFrame([avg_data])], ignore_index=True)
-            cols = ['Ticker', 'Inception', 'Yield (Fwd)'] + num_cols
-            fmt = {c: '{:.2%}' for c in num_cols}
-            st.dataframe(final[[c for c in cols if c in final.columns]].style.format(fmt, na_rep="-"), height=500)
+            cols = ['Ticker', 'Price', 'Industry', 'Inception', 'Streak', 'Freq'] + ALL_NUM_COLS
+            final = final[[c for c in cols if c in final.columns]]
+            
+            fmt = {c: '{:.2%}' for c in ALL_NUM_COLS}
+            fmt['Price'] = '${:.2f}'
+            # Removed na_rep="-" to prevent PyArrow crashes
+            st.dataframe(final.style.format(fmt), height=500)
 
 # --- TAB 4: DEEP DIVE ---
 with tab4:
@@ -188,9 +210,13 @@ with tab5:
         data = [s for s in (get_full_stats(t) for t in tickers) if s]
         if data:
             df = pd.DataFrame(data)
-            cols = ['Ticker', 'Industry', 'Yield (Fwd)', '1W', '1M', 'YTD', '1Y Total', '3Y CAGR', '5Y CAGR', '10Y CAGR', '15Y CAGR', '3Y Div CAGR', '5Y Div CAGR', '10Y Div CAGR', '15Y Div CAGR']
-            fmt = {c: '{:.2%}' for c in cols if c not in ['Ticker', 'Industry']}
-            st.dataframe(df[[c for c in cols if c in df.columns]].style.format(fmt, na_rep="-"), height=500)
+            cols = ['Ticker', 'Price', 'Industry', 'Inception'] + ALL_NUM_COLS
+            final_cols = [c for c in cols if c in df.columns]
+            
+            fmt = {c: '{:.2%}' for c in ALL_NUM_COLS}
+            fmt['Price'] = '${:.2f}'
+            # Removed na_rep="-" to prevent PyArrow crashes
+            st.dataframe(df[final_cols].style.format(fmt), height=500)
 
 # --- TAB 6: AI NEWS & INSIGHTS ---
 with tab6:
