@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="Master Portfolio", layout="wide")
 st.title("📊 Master Portfolio: Light Rios Edition")
 
-DEFAULT_PORT = "FTEC, SCHG, QQQM, SMH"
+DEFAULT_PORT = "SCHG, QQQ, VGT, SMH"
 DEFAULT_BENCH = "VOO, SCHD"
 DEFAULT_WATCH = "SCHD, VYM, VIG, VOO, SCHG, QQQ, VGT, SMH"
 
@@ -20,7 +20,7 @@ ALL_NUM_COLS = [
 ]
 
 # --- COMPACT DATA MAPS ---
-IND_MAP = {"NVDA": "Semi - GPU/AI", "AMD": "Semi - CPU/GPU", "INTC": "Semi - IDM", "TSM": "Semi - Foundry", "AVGO": "Semi - Network", "QCOM": "Semi - Mobile", "MU": "Semi - Memory", "TXN": "Semi - Analog", "ASML": "Semi Equip", "AMAT": "Semi Equip", "LRCX": "Semi Equip", "MSFT": "Cloud/OS", "ORCL": "Cloud/DB", "ADBE": "Creative Soft", "CRM": "Enterprise Soft", "AAPL": "Consumer Elec", "CSCO": "Network HW", "GOOG": "Search/Ads", "GOOGL": "Search/Ads", "META": "Social Media", "AMZN": "E-Commerce/Cloud", "TSLA": "EV Auto", "HD": "Home Improv", "WMT": "Big Box", "LLY": "Pharma", "UNH": "Health Ins", "JPM": "Bank", "V": "Payments", "LMT": "Defense", "XOM": "Oil/Gas", "PLD": "REIT", "QQQM": "Tech / Growth"}
+IND_MAP = {"NVDA": "Semi - GPU/AI", "AMD": "Semi - CPU/GPU", "INTC": "Semi - IDM", "TSM": "Semi - Foundry", "AVGO": "Semi - Network", "QCOM": "Semi - Mobile", "MU": "Semi - Memory", "TXN": "Semi - Analog", "ASML": "Semi Equip", "AMAT": "Semi Equip", "LRCX": "Semi Equip", "MSFT": "Cloud/OS", "ORCL": "Cloud/DB", "ADBE": "Creative Soft", "CRM": "Enterprise Soft", "AAPL": "Consumer Elec", "CSCO": "Network HW", "GOOG": "Search/Ads", "GOOGL": "Search/Ads", "META": "Social Media", "AMZN": "E-Commerce/Cloud", "TSLA": "EV Auto", "HD": "Home Improv", "WMT": "Big Box", "LLY": "Pharma", "UNH": "Health Ins", "JPM": "Bank", "V": "Payments", "LMT": "Defense", "XOM": "Oil/Gas", "PLD": "REIT", "QQQM": "Tech / Growth", "QQQ": "Tech / Growth", "VGT": "Technology"}
 B_INCEPT = {"SMH": "2011-12-20", "QQQ": "1999-03-10", "QQQM": "2020-10-13", "MGK": "2007-12-17", "SCHG": "2009-12-11", "FTEC": "2013-10-21", "VOO": "2010-09-07", "SPY": "1993-01-22", "VGT": "2004-01-26", "VYM": "2006-11-10", "SCHD": "2011-10-20", "JEPQ": "2022-05-03"}
 
 # --- CORE ENGINE ---
@@ -222,19 +222,19 @@ with tab5:
 # --- TAB 6: AI NEWS & INSIGHTS ---
 with tab6:
     st.header("📰 Deep-Dive Portfolio Insights")
-    st.info("Comprehensive structural analysis of your specific allocation: **25% FTEC | 25% SCHG | 25% QQQM | 25% SMH**")
+    st.info("Comprehensive structural analysis of your specific allocation: **25% SCHG | 25% QQQ | 25% VGT | 25% SMH**")
     
     st.markdown("### 📊 Asset Allocation & Overlap Analysis")
     st.markdown("""
     This portfolio is an aggressive, hyper-concentrated bet on **U.S. Mega-Cap Technology and Semiconductors**. 
     
-    * **The Overlap Effect:** Because FTEC (Information Technology), SCHG (Large-Cap Growth), and QQQM (Nasdaq 100) utilize market-cap weighting, they overwhelmingly hold the exact same top companies. 
-    * **The Semiconductor Tilt:** By dedicating 25% of your portfolio directly to SMH (Semiconductors), you are actively layering semiconductor exposure *on top* of the semiconductor exposure already embedded in FTEC, QQQM, and SCHG.
+    * **The Overlap Effect:** Because VGT (Information Technology), SCHG (Large-Cap Growth), and QQQ (Nasdaq 100) utilize market-cap weighting, they overwhelmingly hold the exact same top companies. 
+    * **The Semiconductor Tilt:** By dedicating 25% of your portfolio directly to SMH (Semiconductors), you are actively layering semiconductor exposure *on top* of the semiconductor exposure already embedded in VGT, QQQ, and SCHG.
     
     #### ⚠️ Concentration Vulnerability
     If you break down the actual underlying holdings across these four ETFs, your true exposure is extraordinarily top-heavy:
-    * **Nvidia (NVDA):** You have massive exposure to NVDA. It is the #1 holding in SMH (~20%), a top 3 holding in FTEC (~15%), a top 3 holding in QQQM (~8%), and a top 3 holding in SCHG (~11%). **Estimated pure portfolio exposure: ~13-14%.**
-    * **Microsoft (MSFT) & Apple (AAPL):** These two companies make up roughly 40% of FTEC, 16% of QQQM, and 22% of SCHG. **Estimated pure portfolio exposure to just these two companies: ~19-20%.**
+    * **Nvidia (NVDA):** You have massive exposure to NVDA. It is the #1 holding in SMH (~20%), a top 3 holding in VGT (~13%), a top 3 holding in QQQ (~7%), and a top 3 holding in SCHG (~11%). **Estimated pure portfolio exposure: ~12-13%.**
+    * **Microsoft (MSFT) & Apple (AAPL):** These two companies make up roughly 32% of VGT, 16% of QQQ, and 22% of SCHG. **Estimated pure portfolio exposure to just these two companies: ~17-18%.**
     
     **Bottom Line:** Roughly **1/3 of your entire portfolio** is dictated by the daily price movements of just three companies (NVDA, MSFT, AAPL).
     """)
@@ -243,8 +243,8 @@ with tab6:
 
     st.markdown("### 🚀 Primary Performance Drivers (The Bull Case)")
     st.markdown("""
-    * **The AI Infrastructure Supercycle:** This portfolio is perfectly positioned to capture the ongoing capital expenditure (CapEx) boom in Artificial Intelligence. As long as hyperscalers (Meta, Google, Microsoft, Amazon) continue pouring billions into data centers and hardware, SMH (providing the chips) and FTEC/QQQM (providing the cloud software infrastructure) will structurally outperform the broader market.
-    * **Interest Rate Sensitivity:** High-growth technology companies rely heavily on future cash flow valuations. A macroeconomic environment featuring declining inflation and Federal Reserve rate cuts acts as a tailwind, reducing the discount rate and expanding the P/E multiples of SCHG and QQQM.
+    * **The AI Infrastructure Supercycle:** This portfolio is perfectly positioned to capture the ongoing capital expenditure (CapEx) boom in Artificial Intelligence. As long as hyperscalers (Meta, Google, Microsoft, Amazon) continue pouring billions into data centers and hardware, SMH (providing the chips) and VGT/QQQ (providing the cloud software infrastructure) will structurally outperform the broader market.
+    * **Interest Rate Sensitivity:** High-growth technology companies rely heavily on future cash flow valuations. A macroeconomic environment featuring declining inflation and Federal Reserve rate cuts acts as a tailwind, reducing the discount rate and expanding the P/E multiples of SCHG and QQQ.
     * **Margin Expansion:** Unlike standard S&P 500 companies (VOO) which include lower-margin retail and manufacturing, your holdings represent the highest-margin software and hardware monopolies in the global economy.
     """)
 
@@ -264,7 +264,15 @@ with tab6:
     Given your stated financial goal of **Fat FIRE ($8M+ Net Worth)** and your long time horizon, this aggressive posture is mathematically justified, provided you can stomach high volatility. However, consider the following tactical adjustments as your portfolio scales:
 
     1.  **Introduce Yield/Value (SCHD/VYM):** As your balance grows, mitigating volatility sequence-of-returns risk becomes vital. Allocating 10-15% to a high-quality dividend growth fund (SCHD) provides a stabilizing anchor that performs well during tech corrections.
-    2.  **Consolidate Redundancy (FTEC vs QQQM):** FTEC and QQQM track very similar metrics. You could simplify the portfolio by dropping one and reallocating that 25% into a broader S&P 500 fund (VOO) to capture non-tech growth (Financials, Healthcare, Industrials) without sacrificing your aggressive edge.
+    2.  **Consolidate Redundancy (VGT vs QQQ):** VGT and QQQ track very similar metrics. You could simplify the portfolio by dropping one and reallocating that 25% into a broader S&P 500 fund (VOO) to capture non-tech growth (Financials, Healthcare, Industrials) without sacrificing your aggressive edge.
     """)
+
+    st.markdown("---")
+
+    st.markdown("### 🔗 Direct Research Links")
+    all_tickers = list(set(DEFAULT_PORT.split(',') + DEFAULT_WATCH.split(',')))
+    all_tickers = [x.strip().upper() for x in all_tickers if x.strip()]
+    for t in all_tickers:
+        st.markdown(f"**{t}**: [Google Search: Why is {t} moving?](https://www.google.com/search?q=why+is+{t}+stock+moving+today) | [Yahoo Finance News](https://finance.yahoo.com/quote/{t}/news)")
 
 st.markdown("---")
