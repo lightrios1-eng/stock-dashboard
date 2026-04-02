@@ -4,15 +4,14 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
 
-# --- SOP: CONFIGURATION ---
+# --- CONFIGURATION ---
 st.set_page_config(page_title="Master Portfolio", layout="wide")
 st.title("📊 Master Portfolio: Light Rios Edition")
 
-DEFAULT_PORT = "SCHG, QQQ, VGT, SMH"
+DEFAULT_PORT = "FTEC, SCHG, QQQM, SMH"
 DEFAULT_BENCH = "VOO, SCHD"
 DEFAULT_WATCH = "SCHD, VYM, VIG, VOO, SCHG, QQQ, VGT, SMH"
 
-# Global Column Tracker to ensure no tab misses data
 ALL_NUM_COLS = [
     'Yield (TTM)', 'Yield (Fwd)', '1D', '1W', '1M', 'YTD', 
     '1Y Total', '3Y Total', '3Y CAGR', '5Y Total', '5Y CAGR', 
@@ -21,13 +20,23 @@ ALL_NUM_COLS = [
 ]
 
 # --- COMPACT DATA MAPS ---
-IND_MAP = {"NVDA": "Semi - GPU/AI", "AMD": "Semi - CPU/GPU", "INTC": "Semi - IDM", "TSM": "Semi - Foundry", "AVGO": "Semi - Network", "QCOM": "Semi - Mobile", "MU": "Semi - Memory", "TXN": "Semi - Analog", "ASML": "Semi Equip", "AMAT": "Semi Equip", "LRCX": "Semi Equip", "MSFT": "Cloud/OS", "ORCL": "Cloud/DB", "ADBE": "Creative Soft", "CRM": "Enterprise Soft", "AAPL": "Consumer Elec", "CSCO": "Network HW", "GOOG": "Search/Ads", "GOOGL": "Search/Ads", "META": "Social Media", "AMZN": "E-Commerce/Cloud", "TSLA": "EV Auto", "HD": "Home Improv", "WMT": "Big Box", "LLY": "Pharma", "UNH": "Health Ins", "JPM": "Bank", "V": "Payments", "LMT": "Defense", "XOM": "Oil/Gas", "PLD": "REIT"}
-B_INCEPT = {"SMH": "2011-12-20", "QQQ": "1999-03-10", "MGK": "2007-12-17", "SCHG": "2009-12-11", "FTEC": "2013-10-21", "VOO": "2010-09-07", "SPY": "1993-01-22", "VGT": "2004-01-26", "VYM": "2006-11-10", "SCHD": "2011-10-20", "JEPQ": "2022-05-03"}
+IND_MAP = {"NVDA": "Semi - GPU/AI", "AMD": "Semi - CPU/GPU", "INTC": "Semi - IDM", "TSM": "Semi - Foundry", "AVGO": "Semi - Network", "QCOM": "Semi - Mobile", "MU": "Semi - Memory", "TXN": "Semi - Analog", "ASML": "Semi Equip", "AMAT": "Semi Equip", "LRCX": "Semi Equip", "MSFT": "Cloud/OS", "ORCL": "Cloud/DB", "ADBE": "Creative Soft", "CRM": "Enterprise Soft", "AAPL": "Consumer Elec", "CSCO": "Network HW", "GOOG": "Search/Ads", "GOOGL": "Search/Ads", "META": "Social Media", "AMZN": "E-Commerce/Cloud", "TSLA": "EV Auto", "HD": "Home Improv", "WMT": "Big Box", "LLY": "Pharma", "UNH": "Health Ins", "JPM": "Bank", "V": "Payments", "LMT": "Defense", "XOM": "Oil/Gas", "PLD": "REIT", "QQQM": "Tech / Growth"}
+B_INCEPT = {"SMH": "2011-12-20", "QQQ": "1999-03-10", "QQQM": "2020-10-13", "MGK": "2007-12-17", "SCHG": "2009-12-11", "FTEC": "2013-10-21", "VOO": "2010-09-07", "SPY": "1993-01-22", "VGT": "2004-01-26", "VYM": "2006-11-10", "SCHD": "2011-10-20", "JEPQ": "2022-05-03"}
 
-# --- CORE ENGINE (SINGLE SOURCE OF TRUTH) ---
+# --- CORE ENGINE ---
 def merge_goog(df):
     df['Symbol'] = df['Symbol'].replace({'GOOGL': 'GOOG'})
     return df.groupby('Symbol', as_index=False)['Weight'].sum().sort_values(by='Weight', ascending=False)
+
+def format_dataframe(df):
+    """Safely formats floats to strings to prevent Pandas/PyArrow TypeErrors."""
+    df = df.copy()
+    for col in ALL_NUM_COLS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').apply(lambda x: f"{x:.2%}" if pd.notnull(x) else "-")
+    if 'Price' in df.columns:
+        df['Price'] = pd.to_numeric(df['Price'], errors='coerce').apply(lambda x: f"${x:.2f}" if pd.notnull(x) else "-")
+    return df
 
 @st.cache_data(ttl=3600)
 def get_full_stats(ticker):
@@ -45,7 +54,6 @@ def get_full_stats(ticker):
 
     m = {'Ticker': ticker, 'Price': p, 'Industry': IND_MAP.get(ticker, "ETF/Fund"), 'Inception': B_INCEPT.get(ticker, "N/A"), 'Yield (Fwd)': y_fwd, 'Yield (TTM)': y_ttm}
 
-    # Streaks
     if not div.empty:
         annual_div = div.groupby(div.index.year).sum()
         completed = annual_div[annual_div.index < datetime.now().year].sort_index(ascending=False)
@@ -56,14 +64,12 @@ def get_full_stats(ticker):
     m['Streak'] = streak
     m['Freq'] = "Mo" if cnt >= 11 else "Qr" if cnt >= 3 else "Yr" if cnt >= 1 else "-"
 
-    # Short Term
     m['1D'] = (p - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2] if len(hist)>1 else None
     m['1W'] = (p - hist['Close'].iloc[-6]) / hist['Close'].iloc[-6] if len(hist)>5 else None
     m['1M'] = (p - hist['Close'].iloc[-22]) / hist['Close'].iloc[-22] if len(hist)>21 else None
     ytd = hist[hist.index >= pd.Timestamp(f"{datetime.now().year}-01-01").tz_localize(hist.index.dtype.tz)]
     m['YTD'] = (p - ytd['Open'].iloc[0]) / ytd['Open'].iloc[0] if not ytd.empty else None
 
-    # Long Term (Total & CAGR)
     for y in [1, 3, 5, 10, 15]:
         target = hist.index[-1] - timedelta(days=y*365)
         try:
@@ -75,7 +81,6 @@ def get_full_stats(ticker):
             else: m[f'{y}Y Total'], m[f'{y}Y CAGR'] = None, None
         except: m[f'{y}Y Total'], m[f'{y}Y CAGR'] = None, None
 
-    # Div CAGR
     if not div.empty:
         ly = datetime.now().year - 1
         for y in [3, 5, 10, 15]:
@@ -167,8 +172,8 @@ with tab2:
             avg_p['Inception'] = "-"
             
             final = pd.DataFrame([avg_p] + m_stats)[['Ticker', 'Inception'] + ALL_NUM_COLS].dropna(axis=1, how='all')
-            # Removed na_rep="-" to prevent PyArrow crashes
-            st.dataframe(final.style.format({c: '{:.2%}' for c in ALL_NUM_COLS}), hide_index=True)
+            final_formatted = format_dataframe(final)
+            st.dataframe(final_formatted, hide_index=True)
 
 # --- TAB 3: DIVIDENDS ---
 with tab3:
@@ -185,10 +190,8 @@ with tab3:
             cols = ['Ticker', 'Price', 'Industry', 'Inception', 'Streak', 'Freq'] + ALL_NUM_COLS
             final = final[[c for c in cols if c in final.columns]]
             
-            fmt = {c: '{:.2%}' for c in ALL_NUM_COLS}
-            fmt['Price'] = '${:.2f}'
-            # Removed na_rep="-" to prevent PyArrow crashes
-            st.dataframe(final.style.format(fmt), height=500)
+            final_formatted = format_dataframe(final)
+            st.dataframe(final_formatted, height=500)
 
 # --- TAB 4: DEEP DIVE ---
 with tab4:
@@ -213,51 +216,55 @@ with tab5:
             cols = ['Ticker', 'Price', 'Industry', 'Inception'] + ALL_NUM_COLS
             final_cols = [c for c in cols if c in df.columns]
             
-            fmt = {c: '{:.2%}' for c in ALL_NUM_COLS}
-            fmt['Price'] = '${:.2f}'
-            # Removed na_rep="-" to prevent PyArrow crashes
-            st.dataframe(df[final_cols].style.format(fmt), height=500)
+            final_formatted = format_dataframe(df[final_cols])
+            st.dataframe(final_formatted, height=500)
 
 # --- TAB 6: AI NEWS & INSIGHTS ---
 with tab6:
-    st.header("📰 AI News & Market Insights")
-    st.info("System Constraint: Live AI summarization requires an external API key. Below is an automated Commander's Update Brief (CUB) based on current macroeconomic context, followed by the live fetch attempt.")
+    st.header("📰 Deep-Dive Portfolio Insights")
+    st.info("Comprehensive structural analysis of your specific allocation: **25% FTEC | 25% SCHG | 25% QQQM | 25% SMH**")
     
+    st.markdown("### 📊 Asset Allocation & Overlap Analysis")
     st.markdown("""
-    ### 🧠 Executive Summary: Your Portfolio (SCHG, QQQ, VGT, SMH)
-    **1. Heavy Tech Concentration:** Your portfolio is severely overweight in the "Magnificent 7" (NVDA, MSFT, AAPL). 
-    * *Bull Case:* If AI spending (CapEx) from Microsoft/Meta remains high, SMH and VGT will continue to generate massive returns.
-    * *Bear Case:* If inflation rises or earnings miss expectations, your entire portfolio will drop simultaneously due to high correlation.
+    This portfolio is an aggressive, hyper-concentrated bet on **U.S. Mega-Cap Technology and Semiconductors**. 
     
-    **2. The Dividend Gap:** This portfolio prioritizes pure growth over income. 
-    * *Recommendation:* If market volatility increases, consider re-allocating a small percentage to **SCHD** or **VYM** to provide a psychological buffer via cash flow.
+    * **The Overlap Effect:** Because FTEC (Information Technology), SCHG (Large-Cap Growth), and QQQM (Nasdaq 100) utilize market-cap weighting, they overwhelmingly hold the exact same top companies. 
+    * **The Semiconductor Tilt:** By dedicating 25% of your portfolio directly to SMH (Semiconductors), you are actively layering semiconductor exposure *on top* of the semiconductor exposure already embedded in FTEC, QQQM, and SCHG.
+    
+    #### ⚠️ Concentration Vulnerability
+    If you break down the actual underlying holdings across these four ETFs, your true exposure is extraordinarily top-heavy:
+    * **Nvidia (NVDA):** You have massive exposure to NVDA. It is the #1 holding in SMH (~20%), a top 3 holding in FTEC (~15%), a top 3 holding in QQQM (~8%), and a top 3 holding in SCHG (~11%). **Estimated pure portfolio exposure: ~13-14%.**
+    * **Microsoft (MSFT) & Apple (AAPL):** These two companies make up roughly 40% of FTEC, 16% of QQQM, and 22% of SCHG. **Estimated pure portfolio exposure to just these two companies: ~19-20%.**
+    
+    **Bottom Line:** Roughly **1/3 of your entire portfolio** is dictated by the daily price movements of just three companies (NVDA, MSFT, AAPL).
     """)
+
     st.markdown("---")
 
-    st.subheader("Live News Feed Attempt (Subject to Cloud Blocking)")
-    all_t = list(set(DEFAULT_PORT.split(',') + ["NVDA", "AAPL", "MSFT"]))
-    news_feed, bar = [], st.progress(0)
-    
-    for i, t in enumerate(all_t):
-        try:
-            n = yf.Ticker(t).news
-            if n:
-                for a in n: news_feed.append({'Ticker': t, 'Title': a.get('title'), 'Publisher': a.get('publisher'), 'Time': datetime.fromtimestamp(a.get('providerPublishTime', 0))})
-        except: pass
-        bar.progress((i+1)/len(all_t))
-    bar.empty()
-    
-    if news_feed:
-        df_news = pd.DataFrame(news_feed).sort_values(by='Time', ascending=False).drop_duplicates(subset=['Title'])
-        today = datetime.now().date()
-        def show_news(title, df):
-            if not df.empty:
-                st.subheader(title)
-                for _, r in df.iterrows(): st.markdown(f"**{r['Ticker']}** | {r['Title']} _({r['Publisher']})_")
-        show_news("🌞 Today", df_news[df_news['Time'].dt.date == today])
-        show_news("📅 This Week", df_news[(df_news['Time'].dt.date < today) & (df_news['Time'].dt.date >= today - timedelta(days=7))])
-        show_news("🗓️ Older", df_news[df_news['Time'].dt.date < today - timedelta(days=7)])
-    else:
-        st.warning("Yahoo Finance API blocked the live news fetch. This is common on cloud servers.")
+    st.markdown("### 🚀 Primary Performance Drivers (The Bull Case)")
+    st.markdown("""
+    * **The AI Infrastructure Supercycle:** This portfolio is perfectly positioned to capture the ongoing capital expenditure (CapEx) boom in Artificial Intelligence. As long as hyperscalers (Meta, Google, Microsoft, Amazon) continue pouring billions into data centers and hardware, SMH (providing the chips) and FTEC/QQQM (providing the cloud software infrastructure) will structurally outperform the broader market.
+    * **Interest Rate Sensitivity:** High-growth technology companies rely heavily on future cash flow valuations. A macroeconomic environment featuring declining inflation and Federal Reserve rate cuts acts as a tailwind, reducing the discount rate and expanding the P/E multiples of SCHG and QQQM.
+    * **Margin Expansion:** Unlike standard S&P 500 companies (VOO) which include lower-margin retail and manufacturing, your holdings represent the highest-margin software and hardware monopolies in the global economy.
+    """)
+
+    st.markdown("---")
+
+    st.markdown("### 📉 Risk Management & Vulnerabilities (The Bear Case)")
+    st.markdown("""
+    * **Zero Defensive Capabilities:** This portfolio contains effectively 0% exposure to defensive sectors (Utilities, Consumer Staples, Healthcare). In a classic recessionary environment or a tech-led market correction (similar to 2022), this portfolio will experience drawdowns significantly deeper than the S&P 500.
+    * **Valuation Risk:** Growth stocks are currently priced for perfection. Any sign of slowing AI adoption, delayed hardware rollouts (e.g., Blackwell chip delays), or regulatory antitrust actions against Mega-Cap tech will trigger immediate algorithmic sell-offs.
+    * **The Income Gap:** The dividend yield on this portfolio is negligible (sub-0.50%). It does not generate meaningful cash flow to reinvest during market downturns, relying entirely on capital appreciation for Total Return.
+    """)
+
+    st.markdown("---")
+
+    st.markdown("### 🎯 Strategic Considerations for the Future")
+    st.markdown("""
+    Given your stated financial goal of **Fat FIRE ($8M+ Net Worth)** and your long time horizon, this aggressive posture is mathematically justified, provided you can stomach high volatility. However, consider the following tactical adjustments as your portfolio scales:
+
+    1.  **Introduce Yield/Value (SCHD/VYM):** As your balance grows, mitigating volatility sequence-of-returns risk becomes vital. Allocating 10-15% to a high-quality dividend growth fund (SCHD) provides a stabilizing anchor that performs well during tech corrections.
+    2.  **Consolidate Redundancy (FTEC vs QQQM):** FTEC and QQQM track very similar metrics. You could simplify the portfolio by dropping one and reallocating that 25% into a broader S&P 500 fund (VOO) to capture non-tech growth (Financials, Healthcare, Industrials) without sacrificing your aggressive edge.
+    """)
 
 st.markdown("---")
