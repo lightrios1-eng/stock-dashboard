@@ -3,9 +3,6 @@ import yfinance as yf
 import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
-import urllib.request
-import xml.etree.ElementTree as ET
-from email.utils import parsedate_to_datetime
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Master Portfolio", layout="wide")
@@ -108,7 +105,7 @@ def get_holdings(ticker):
     return pd.DataFrame()
 
 # --- UI TABS ---
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🚀 X-Ray", "🆚 Benchmark", "📈 Dividends", "🔍 Deep Dive", "👀 Watchlist", "📰 AI News & Insights"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🚀 X-Ray", "🆚 Benchmark", "📈 Dividends", "🔍 Deep Dive", "👀 Watchlist", "📰 Insights & Updates"])
 
 # --- TAB 1: X-RAY ---
 with tab1:
@@ -221,74 +218,69 @@ with tab5:
             final_formatted = format_dataframe(df[final_cols])
             st.dataframe(final_formatted, height=500)
 
-# --- TAB 6: AI NEWS (LIVE FETCH) ---
+# --- TAB 6: AI NEWS & INSIGHTS ---
 with tab6:
-    st.header("📰 Live Market News")
-    st.info("Aggregating live, free news from Yahoo Finance, Google News, CNBC, and other financial outlets...")
+    st.header("📰 Deep-Dive Portfolio Insights")
     
-    all_tickers = list(set(DEFAULT_PORT.split(',') + DEFAULT_WATCH.split(',')))
-    all_tickers = [x.strip().upper() for x in all_tickers if x.strip()]
+    st.markdown("### ⏱️ Dynamic Market Pulse (Updates Instantly)")
+    st.caption("Live performance metrics for your core holdings across Daily, Weekly, Monthly, and Annual timeframes.")
     
-    news_feed = []
-    my_bar = st.progress(0, text="Scanning for breaking news...")
+    pulse_tickers = [x.strip().upper() for x in DEFAULT_PORT.split(',')]
+    pulse_data = [s for s in (get_full_stats(t) for t in pulse_tickers) if s]
     
-    for i, t in enumerate(all_tickers):
-        # 1. Attempt Yahoo Finance News
-        try:
-            stock = yf.Ticker(t)
-            y_news = stock.news
-            if y_news:
-                for a in y_news[:5]:
-                    dt = datetime.fromtimestamp(a.get('providerPublishTime', 0))
-                    news_feed.append({'Ticker': t, 'Title': a.get('title'), 'Publisher': a.get('publisher', 'Yahoo Finance'), 'Link': a.get('link'), 'Time': dt})
-        except: pass
-
-        # 2. Attempt Google News RSS (Aggregates CNBC, Reuters, Bloomberg, etc.)
-        try:
-            url = f"https://news.google.com/rss/search?q={t}+stock&hl=en-US&gl=US&ceid=US:en"
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=5) as response:
-                xml_data = response.read()
-            root = ET.fromstring(xml_data)
-            for item in root.findall('.//channel/item')[:5]:
-                pub_date_str = item.find('pubDate').text
-                dt = parsedate_to_datetime(pub_date_str)
-                if dt.tzinfo is not None:
-                    dt = dt.astimezone().replace(tzinfo=None)
-                source = item.find('source').text if item.find('source') is not None else 'Google News'
-                news_feed.append({'Ticker': t, 'Title': item.find('title').text, 'Publisher': source, 'Link': item.find('link').text, 'Time': dt})
-        except: pass
-        
-        my_bar.progress((i + 1) / len(all_tickers), text=f"Fetching latest alerts for {t}...")
-        
-    my_bar.empty()
-    
-    if news_feed:
-        df_news = pd.DataFrame(news_feed)
-        # Clean data and remove duplicate titles from crossing sources
-        df_news = df_news.sort_values(by='Time', ascending=False)
-        df_news = df_news.drop_duplicates(subset=['Title'])
-        
-        today = datetime.now().date()
-        week_ago = today - timedelta(days=7)
-        month_ago = today - timedelta(days=30)
-        
-        daily = df_news[df_news['Time'].dt.date == today]
-        weekly = df_news[(df_news['Time'].dt.date < today) & (df_news['Time'].dt.date >= week_ago)]
-        monthly = df_news[(df_news['Time'].dt.date < week_ago) & (df_news['Time'].dt.date >= month_ago)]
-        
-        def display_news_section(title, df):
-            if not df.empty:
-                st.subheader(title)
-                for index, row in df.iterrows():
-                    st.markdown(f"**{row['Ticker']}** | [{row['Title']}]({row['Link']})")
-                    st.caption(f"Source: {row['Publisher']} • {row['Time'].strftime('%Y-%m-%d %I:%M %p')}")
-                    st.markdown("---")
-
-        display_news_section("🔥 Breaking Today", daily)
-        display_news_section("📅 This Week", weekly)
-        display_news_section("🗓️ This Month", monthly)
+    if pulse_data:
+        df_pulse = pd.DataFrame(pulse_data)
+        pulse_cols = ['Ticker', 'Price', '1D', '1W', '1M', 'YTD']
+        df_pulse = df_pulse[[c for c in pulse_cols if c in df_pulse.columns]]
+        st.dataframe(format_dataframe(df_pulse), hide_index=True)
     else:
-        st.warning("No recent news found. The cloud server may be temporarily blocked from accessing news feeds.")
+        st.warning("Could not load real-time market data.")
+
+    st.markdown("---")
+
+    st.markdown("### 🧠 Executive Summary: Your Portfolio (SCHG, QQQ, VGT, SMH)")
+    
+    st.markdown("#### 📊 Asset Allocation & Overlap Analysis")
+    st.markdown("""
+    This portfolio is an aggressive, hyper-concentrated bet on **U.S. Mega-Cap Technology and Semiconductors**. 
+    
+    * **The Overlap Effect:** Because VGT (Information Technology), SCHG (Large-Cap Growth), and QQQ (Nasdaq 100) utilize market-cap weighting, they overwhelmingly hold the exact same top companies. 
+    * **The Semiconductor Tilt:** By dedicating 25% of your portfolio directly to SMH (Semiconductors), you are actively layering semiconductor exposure *on top* of the semiconductor exposure already embedded in VGT, QQQ, and SCHG.
+    
+    **⚠️ Concentration Vulnerability**
+    If you break down the actual underlying holdings across these four ETFs, your true exposure is extraordinarily top-heavy:
+    * **Nvidia (NVDA):** You have massive exposure to NVDA. It is the #1 holding in SMH (~20%), a top 3 holding in VGT (~13%), a top 3 holding in QQQ (~7%), and a top 3 holding in SCHG (~11%). **Estimated pure portfolio exposure: ~12-13%.**
+    * **Microsoft (MSFT) & Apple (AAPL):** These two companies make up roughly 32% of VGT, 16% of QQQ, and 22% of SCHG. **Estimated pure portfolio exposure to just these two companies: ~17-18%.**
+    
+    **Bottom Line:** Roughly **1/3 of your entire portfolio** is dictated by the daily price movements of just three companies (NVDA, MSFT, AAPL).
+    """)
+
+    st.markdown("---")
+
+    st.markdown("#### 🚀 Primary Performance Drivers (The Bull Case)")
+    st.markdown("""
+    * **The AI Infrastructure Supercycle:** This portfolio is perfectly positioned to capture the ongoing capital expenditure (CapEx) boom in Artificial Intelligence. As long as hyperscalers (Meta, Google, Microsoft, Amazon) continue pouring billions into data centers and hardware, SMH (providing the chips) and VGT/QQQ (providing the cloud software infrastructure) will structurally outperform the broader market.
+    * **Interest Rate Sensitivity:** High-growth technology companies rely heavily on future cash flow valuations. A macroeconomic environment featuring declining inflation and Federal Reserve rate cuts acts as a tailwind, reducing the discount rate and expanding the P/E multiples of SCHG and QQQ.
+    * **Margin Expansion:** Unlike standard S&P 500 companies (VOO) which include lower-margin retail and manufacturing, your holdings represent the highest-margin software and hardware monopolies in the global economy.
+    """)
+
+    st.markdown("---")
+
+    st.markdown("#### 📉 Risk Management & Vulnerabilities (The Bear Case)")
+    st.markdown("""
+    * **Zero Defensive Capabilities:** This portfolio contains effectively 0% exposure to defensive sectors (Utilities, Consumer Staples, Healthcare). In a classic recessionary environment or a tech-led market correction (similar to 2022), this portfolio will experience drawdowns significantly deeper than the S&P 500.
+    * **Valuation Risk:** Growth stocks are currently priced for perfection. Any sign of slowing AI adoption, delayed hardware rollouts (e.g., Blackwell chip delays), or regulatory antitrust actions against Mega-Cap tech will trigger immediate algorithmic sell-offs.
+    * **The Income Gap:** The dividend yield on this portfolio is negligible (sub-0.50%). It does not generate meaningful cash flow to reinvest during market downturns, relying entirely on capital appreciation for Total Return.
+    """)
+
+    st.markdown("---")
+
+    st.markdown("#### 🎯 Strategic Considerations for the Future")
+    st.markdown("""
+    Given your stated financial goal of **Fat FIRE ($8M+ Net Worth)** and your long time horizon, this aggressive posture is mathematically justified, provided you can stomach high volatility. However, consider the following tactical adjustments as your portfolio scales:
+
+    1.  **Introduce Yield/Value (SCHD/VYM):** As your balance grows, mitigating volatility sequence-of-returns risk becomes vital. Allocating 10-15% to a high-quality dividend growth fund (SCHD) provides a stabilizing anchor that performs well during tech corrections.
+    2.  **Consolidate Redundancy (VGT vs QQQ):** VGT and QQQ track very similar metrics. You could simplify the portfolio by dropping one and reallocating that 25% into a broader S&P 500 fund (VOO) to capture non-tech growth (Financials, Healthcare, Industrials) without sacrificing your aggressive edge.
+    """)
 
 st.markdown("---")
