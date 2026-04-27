@@ -13,16 +13,16 @@ DEFAULT_BENCH = "VOO, SCHD"
 DEFAULT_WATCH = "SCHD, VYM, VIG, VOO, SCHG, QQQ, VGT, SMH"
 
 ALL_NUM_COLS = [
-    'Yield (TTM)', 'Yield (Fwd)', '1D', '1W', '1M', 'YTD', 
-    '1Y Total', '3Y Total', '3Y CAGR', '5Y Total', '5Y CAGR', 
-    '10Y Total', '10Y CAGR', '15Y Total', '15Y CAGR', 
+    'Yield (TTM)', 'Yield (Fwd)', '1D', '1W', '1M', 'YTD',
+    '1Y Total', '3Y Total', '3Y CAGR', '5Y Total', '5Y CAGR',
+    '10Y Total', '10Y CAGR', '15Y Total', '15Y CAGR',
     '3Y Div CAGR', '5Y Div CAGR', '10Y Div CAGR', '15Y Div CAGR'
 ]
 
 # --- ULTRA-SPECIFIC DATA MAPS ---
 IND_MAP = {
     "NVDA": "Semi - GPU/AI Logic", "AMD": "Semi - CPU/GPU", "INTC": "Semi - IDM (Mfg)", "TSM": "Semi - Foundry (Mfg)",
-    "AVGO": "Semi - Networking/RF", "QCOM": "Semi - Mobile/Comms", "MU": "Semi - Memory (DRAM/NAND)", 
+    "AVGO": "Semi - Networking/RF", "QCOM": "Semi - Mobile/Comms", "MU": "Semi - Memory (DRAM/NAND)",
     "TXN": "Semi - Analog/Embedded", "ADI": "Semi - Analog/Mixed Signal", "NXPI": "Semi - Auto/IoT",
     "ON": "Semi - Power/Sensors", "MCHP": "Semi - Microcontrollers", "MPWR": "Semi - Power Management",
     "ASML": "Semi Equip - Lithography", "AMAT": "Semi Equip - Materials Eng", "LRCX": "Semi Equip - Etch/Deposition",
@@ -63,7 +63,8 @@ def get_full_stats(ticker):
         hist = stock.history(period="max", auto_adjust=True)
         div = stock.dividends
         info = stock.info
-    except: return None
+    except Exception:
+        return None
     if hist.empty: return None
 
     p = hist['Close'].iloc[-1]
@@ -77,7 +78,7 @@ def get_full_stats(ticker):
         completed = annual_div[annual_div.index < datetime.now().year].sort_index(ascending=False)
         streak = next((i for i in range(len(completed)-1) if completed.iloc[i] <= completed.iloc[i+1]), len(completed)-1) if len(completed) > 1 else 0
     else: streak = 0
-    
+
     cnt = div[div.index.year == (datetime.now().year - 1)].count() if not div.empty else 0
     m['Streak'] = streak
     m['Freq'] = "Mo" if cnt >= 11 else "Qr" if cnt >= 3 else "Yr" if cnt >= 1 else "-"
@@ -97,7 +98,8 @@ def get_full_stats(ticker):
                 m[f'{y}Y Total'] = (p - sp) / sp
                 m[f'{y}Y CAGR'] = (p / sp) ** (1/y) - 1 if y > 1 else None
             else: m[f'{y}Y Total'], m[f'{y}Y CAGR'] = None, None
-        except: m[f'{y}Y Total'], m[f'{y}Y CAGR'] = None, None
+        except Exception:
+            m[f'{y}Y Total'], m[f'{y}Y CAGR'] = None, None
 
     if not div.empty:
         ly = datetime.now().year - 1
@@ -106,7 +108,8 @@ def get_full_stats(ticker):
                 if ly in annual_div.index and (ly-y) in annual_div.index and annual_div.loc[ly-y] > 0:
                     m[f'{y}Y Div CAGR'] = (annual_div.loc[ly] / annual_div.loc[ly-y]) ** (1/y) - 1
                 else: m[f'{y}Y Div CAGR'] = None
-            except: m[f'{y}Y Div CAGR'] = None
+            except Exception:
+                m[f'{y}Y Div CAGR'] = None
     else:
         for y in [3, 5, 10, 15]: m[f'{y}Y Div CAGR'] = None
 
@@ -120,7 +123,8 @@ def get_holdings(ticker):
             df = df.reset_index().iloc[:, [0, -1]]
             df.columns = ['Symbol', 'Raw_Weight']
             return df
-    except: pass
+    except Exception:
+        pass
     return pd.DataFrame()
 
 # --- UI TABS ---
@@ -131,16 +135,23 @@ with tab1:
     st.header("Portfolio X-Ray")
     etfs = [x.strip().upper() for x in st.text_input("ETFs to Blend:", DEFAULT_PORT).split(',')]
     cols = st.columns(len(etfs) if len(etfs) > 0 else 1)
-    weights = {}
+    raw_weights = {}
     for i, t in enumerate(etfs):
-        with cols[i]: weights[t] = st.slider(f"{t} %", 0, 100, 100//len(etfs)) / 100.0
+        with cols[i]: raw_weights[t] = st.slider(f"{t} %", 0, 100, 100//len(etfs)) / 100.0
+
+    total_w = sum(raw_weights.values())
+    if total_w > 0:
+        weights = {t: w / total_w for t, w in raw_weights.items()}
+        st.caption(f"Sliders sum to {total_w*100:.0f}% — normalized to 100% for the math below.")
+    else:
+        weights = raw_weights
 
     if st.button("Analyze Blended Holdings"):
         st.subheader("📈 Blended Performance (Weighted Average)")
         periods = ['1W', '1M', 'YTD', '1Y Total', '3Y CAGR', '5Y CAGR', '10Y CAGR', '15Y CAGR']
         b_stats = {p: 0.0 for p in periods}
         v_weights = {p: 0.0 for p in periods}
-        
+
         for t in etfs:
             if weights[t] > 0:
                 stats = get_full_stats(t)
@@ -149,7 +160,7 @@ with tab1:
                         if stats.get(p) is not None:
                             b_stats[p] += stats[p] * weights[t]
                             v_weights[p] += weights[t]
-        
+
         m_cols = st.columns(len(periods))
         for i, p in enumerate(periods):
             vw = v_weights[p]
@@ -166,11 +177,10 @@ with tab1:
         if dfs:
             full = merge_goog(pd.concat(dfs))
             full['Weight %'] = (full['Weight'] * 100).round(2)
-            # Safely map industry, fallback to Diversified if missing to avoid "ETF/Fund" error
             full['Industry'] = full['Symbol'].apply(lambda x: IND_MAP.get(x, "Diversified / Other"))
-            
+
             c1, c2 = st.columns([2,1])
-            with c1: 
+            with c1:
                 fig = px.treemap(full.head(40), path=[px.Constant("Portfolio"), 'Symbol'], values='Weight %', custom_data=['Industry'], title="Top Holdings")
                 fig.update_traces(textinfo="label+value", texttemplate="%{label}<br>%{customdata[0]}<br>%{value:.2f}%")
                 st.plotly_chart(fig, use_container_width=True)
@@ -182,7 +192,7 @@ with tab2:
     cp, cm = st.columns(2)
     with cp: p_list = [x.strip().upper() for x in st.text_input("Your Portfolio (Editable):", DEFAULT_PORT).split(',')]
     with cm: m_list = [x.strip().upper() for x in st.text_input("Benchmark(s):", DEFAULT_BENCH).split(',')]
-    
+
     if st.button("Compare"):
         p_stats = [s for s in (get_full_stats(t) for t in p_list) if s]
         m_stats = [s for s in (get_full_stats(t) for t in m_list) if s]
@@ -191,7 +201,7 @@ with tab2:
             avg_p = {c: df_p[c].mean() for c in ALL_NUM_COLS if c in df_p.columns}
             avg_p['Ticker'] = "PORTFOLIO AVG"
             avg_p['Inception'] = "-"
-            
+
             final = pd.DataFrame([avg_p] + m_stats)[['Ticker', 'Inception'] + ALL_NUM_COLS].dropna(axis=1, how='all')
             final_formatted = format_dataframe(final)
             st.dataframe(final_formatted, hide_index=True)
@@ -199,26 +209,27 @@ with tab2:
 # --- TAB 3: DIVIDENDS ---
 with tab3:
     st.header("Dividend & Growth Data")
+    t_list = [x.strip().upper() for x in st.text_area("Tickers", DEFAULT_PORT).split(',')]
     if st.button("Load Dividends"):
-        t_list = [x.strip().upper() for x in st.text_area("Tickers", DEFAULT_PORT).split(',')]
         data = [s for s in (get_full_stats(t) for t in t_list) if s]
         if data:
             df = pd.DataFrame(data)
             avg_data = {c: df[c].mean() for c in ALL_NUM_COLS if c in df.columns}
             avg_data.update({'Ticker': "AVERAGE", 'Inception': "-", 'Industry': "-", 'Price': None, 'Streak': None, 'Freq': "-"})
-            
+
             final = pd.concat([df, pd.DataFrame([avg_data])], ignore_index=True)
             cols = ['Ticker', 'Price', 'Industry', 'Inception', 'Streak', 'Freq'] + ALL_NUM_COLS
             final = final[[c for c in cols if c in final.columns]]
-            
+
             final_formatted = format_dataframe(final)
             st.dataframe(final_formatted, height=500)
 
 # --- TAB 4: DEEP DIVE ---
 with tab4:
     st.header("Multi-ETF Deep Dive")
+    deep_tickers = [x.strip().upper() for x in st.text_input("Tickers:", DEFAULT_PORT, key="deep_dive_tickers").split(',')]
     if st.button("Inspect ETFs"):
-        for t in [x.strip().upper() for x in st.text_input("Tickers:", DEFAULT_PORT).split(',')]:
+        for t in deep_tickers:
             st.subheader(f"Analysis for {t} | Inception: {B_INCEPT.get(t, 'N/A')}")
             df = get_holdings(t)
             if not df.empty:
@@ -229,27 +240,27 @@ with tab4:
 # --- TAB 5: WATCHLIST ---
 with tab5:
     st.header("Watchlist & Consideration")
+    watch_tickers = [x.strip().upper() for x in st.text_input("Tickers:", DEFAULT_WATCH, key="watch_tickers").split(',')]
     if st.button("Update Watchlist"):
-        tickers = [x.strip().upper() for x in st.text_input("Tickers:", DEFAULT_WATCH).split(',')]
-        data = [s for s in (get_full_stats(t) for t in tickers) if s]
+        data = [s for s in (get_full_stats(t) for t in watch_tickers) if s]
         if data:
             df = pd.DataFrame(data)
             cols = ['Ticker', 'Price', 'Industry', 'Inception'] + ALL_NUM_COLS
             final_cols = [c for c in cols if c in df.columns]
-            
+
             final_formatted = format_dataframe(df[final_cols])
             st.dataframe(final_formatted, height=500)
 
 # --- TAB 6: AI NEWS & INSIGHTS ---
 with tab6:
     st.header("📰 Deep-Dive Portfolio Insights")
-    
+
     st.markdown("### ⏱️ Dynamic Market Pulse (Updates Instantly)")
     st.caption("Live performance metrics for your core holdings across Daily, Weekly, Monthly, and Annual timeframes.")
-    
+
     pulse_tickers = [x.strip().upper() for x in DEFAULT_PORT.split(',')]
     pulse_data = [s for s in (get_full_stats(t) for t in pulse_tickers) if s]
-    
+
     if pulse_data:
         df_pulse = pd.DataFrame(pulse_data)
         pulse_cols = ['Ticker', 'Price', '1D', '1W', '1M', 'YTD']
@@ -262,28 +273,28 @@ with tab6:
 
     st.markdown("### 🤖 1-Click Gemini Ultra Intelligence Update")
     st.markdown("Use this payload to instantly command Gemini to generate a comprehensive Daily, Weekly, Monthly, and Annual structural review of your live holdings.")
-    
+
     prompt_text = f"Give me a comprehensive news update about my investment portfolio. It is blended equally among: {DEFAULT_PORT}. Format with headings for Daily/Weekly (Short-Term Dynamics), Monthly (Medium-Term Trends), and Annual Outlook (Long-Term Fundamentals)."
-    
+
     st.code(prompt_text, language="text")
     st.markdown("[🔗 **Open Gemini Ultra (Click Here)**](https://gemini.google.com/app)")
 
     st.markdown("---")
 
     st.markdown("### 🧠 Executive Summary: Your Portfolio (SCHG, QQQ, VGT, SMH)")
-    
+
     st.markdown("#### 📊 Asset Allocation & Overlap Analysis")
     st.markdown("""
-    This portfolio is an aggressive, hyper-concentrated bet on **U.S. Mega-Cap Technology and Semiconductors**. 
-    
-    * **The Overlap Effect:** Because VGT (Information Technology), SCHG (Large-Cap Growth), and QQQ (Nasdaq 100) utilize market-cap weighting, they overwhelmingly hold the exact same top companies. 
+    This portfolio is an aggressive, hyper-concentrated bet on **U.S. Mega-Cap Technology and Semiconductors**.
+
+    * **The Overlap Effect:** Because VGT (Information Technology), SCHG (Large-Cap Growth), and QQQ (Nasdaq 100) utilize market-cap weighting, they overwhelmingly hold the exact same top companies.
     * **The Semiconductor Tilt:** By dedicating 25% of your portfolio directly to SMH (Semiconductors), you are actively layering semiconductor exposure *on top* of the semiconductor exposure already embedded in VGT, QQQ, and SCHG.
-    
+
     **⚠️ Concentration Vulnerability**
     If you break down the actual underlying holdings across these four ETFs, your true exposure is extraordinarily top-heavy:
     * **Nvidia (NVDA):** You have massive exposure to NVDA. It is the #1 holding in SMH (~20%), a top 3 holding in VGT (~13%), a top 3 holding in QQQ (~7%), and a top 3 holding in SCHG (~11%). **Estimated pure portfolio exposure: ~12-13%.**
     * **Microsoft (MSFT) & Apple (AAPL):** These two companies make up roughly 32% of VGT, 16% of QQQ, and 22% of SCHG. **Estimated pure portfolio exposure to just these two companies: ~17-18%.**
-    
+
     **Bottom Line:** Roughly **1/3 of your entire portfolio** is dictated by the daily price movements of just three companies (NVDA, MSFT, AAPL).
     """)
 
