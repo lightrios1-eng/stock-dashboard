@@ -2,7 +2,6 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.express as px
-from datetime import datetime, timedelta
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Master Portfolio", layout="wide")
@@ -13,317 +12,812 @@ DEFAULT_BENCH = "VOO, SCHD"
 DEFAULT_WATCH = "SCHD, VYM, VIG, VOO, SCHG, QQQ, VGT, SMH"
 
 ALL_NUM_COLS = [
-    'Yield (TTM)', 'Yield (Fwd)', '1D', '1W', '1M', 'YTD',
-    '1Y Total', '3Y Total', '3Y CAGR', '5Y Total', '5Y CAGR',
-    '10Y Total', '10Y CAGR', '15Y Total', '15Y CAGR',
-    '3Y Div CAGR', '5Y Div CAGR', '10Y Div CAGR', '15Y Div CAGR'
+    "Yield (TTM)", "Yield (Fwd)", "1D", "1W", "1M", "YTD",
+    "1Y Total", "3Y Total", "3Y CAGR", "5Y Total", "5Y CAGR",
+    "10Y Total", "10Y CAGR", "15Y Total", "15Y CAGR",
+    "3Y Div CAGR", "5Y Div CAGR", "10Y Div CAGR", "15Y Div CAGR"
 ]
 
-# --- ULTRA-SPECIFIC DATA MAPS ---
+PERF_PERIODS = ["1W", "1M", "YTD", "1Y Total", "3Y CAGR", "5Y CAGR", "10Y CAGR", "15Y CAGR"]
+
 IND_MAP = {
-    "NVDA": "Semi - GPU/AI Logic", "AMD": "Semi - CPU/GPU", "INTC": "Semi - IDM (Mfg)", "TSM": "Semi - Foundry (Mfg)",
-    "AVGO": "Semi - Networking/RF", "QCOM": "Semi - Mobile/Comms", "MU": "Semi - Memory (DRAM/NAND)",
-    "TXN": "Semi - Analog/Embedded", "ADI": "Semi - Analog/Mixed Signal", "NXPI": "Semi - Auto/IoT",
-    "ON": "Semi - Power/Sensors", "MCHP": "Semi - Microcontrollers", "MPWR": "Semi - Power Management",
-    "ASML": "Semi Equip - Lithography", "AMAT": "Semi Equip - Materials Eng", "LRCX": "Semi Equip - Etch/Deposition",
-    "KLAC": "Semi Equip - Process Control", "TER": "Semi Equip - Test/Measurement", "ENTG": "Semi Equip - Adv Materials",
-    "SNPS": "Software - Chip Design (EDA)", "CDNS": "Software - Chip Design (EDA)", "ARM": "Semi - IP/Architecture",
-    "MSFT": "Cloud & OS Infrastructure", "ORCL": "Cloud/DB", "ADBE": "Software - Creative", "CRM": "Software - Enterprise",
-    "AAPL": "Consumer Electronics", "CSCO": "Networking Hardware", "GOOG": "Search/Ads", "GOOGL": "Search/Ads",
-    "META": "Social Media", "AMZN": "E-Commerce/Cloud", "TSLA": "Auto Mfr - EV", "HD": "Home Improvement",
-    "WMT": "Big Box Retail", "LLY": "Pharma", "UNH": "Health Ins", "JPM": "Bank", "V": "Payments",
-    "MA": "Payments", "COST": "Warehouse Club", "NFLX": "Media - Streaming", "PEP": "Beverages",
-    "KO": "Beverages", "PANW": "Cybersecurity", "CRWD": "Cybersecurity", "NOW": "Software - IT Services",
-    "PLTR": "Data Analytics", "INTU": "Financial Soft", "ISRG": "Medical Devices", "AMGN": "Biotech",
-    "QQQM": "Tech / Growth ETF", "QQQ": "Tech / Growth ETF", "VGT": "Technology ETF", "SMH": "Semiconductor ETF",
-    "SCHG": "Growth ETF", "VOO": "S&P 500 ETF", "SCHD": "Dividend ETF", "VYM": "Dividend ETF", "VIG": "Dividend ETF"
+    "NVDA": "Semi - GPU/AI Logic", "AMD": "Semi - CPU/GPU", "INTC": "Semi - IDM (Mfg)",
+    "TSM": "Semi - Foundry (Mfg)", "AVGO": "Semi - Networking/RF", "QCOM": "Semi - Mobile/Comms",
+    "MU": "Semi - Memory (DRAM/NAND)", "TXN": "Semi - Analog/Embedded",
+    "ADI": "Semi - Analog/Mixed Signal", "NXPI": "Semi - Auto/IoT", "ON": "Semi - Power/Sensors",
+    "MCHP": "Semi - Microcontrollers", "MPWR": "Semi - Power Management",
+    "ASML": "Semi Equip - Lithography", "AMAT": "Semi Equip - Materials Eng",
+    "LRCX": "Semi Equip - Etch/Deposition", "KLAC": "Semi Equip - Process Control",
+    "TER": "Semi Equip - Test/Measurement", "ENTG": "Semi Equip - Adv Materials",
+    "SNPS": "Software - Chip Design (EDA)", "CDNS": "Software - Chip Design (EDA)",
+    "ARM": "Semi - IP/Architecture", "MSFT": "Cloud & OS Infrastructure",
+    "ORCL": "Cloud/DB", "ADBE": "Software - Creative", "CRM": "Software - Enterprise",
+    "AAPL": "Consumer Electronics", "CSCO": "Networking Hardware", "GOOG": "Search/Ads",
+    "GOOGL": "Search/Ads", "META": "Social Media", "AMZN": "E-Commerce/Cloud",
+    "TSLA": "Auto Mfr - EV", "HD": "Home Improvement", "WMT": "Big Box Retail",
+    "LLY": "Pharma", "UNH": "Health Ins", "JPM": "Bank", "V": "Payments",
+    "MA": "Payments", "COST": "Warehouse Club", "NFLX": "Media - Streaming",
+    "PEP": "Beverages", "KO": "Beverages", "PANW": "Cybersecurity",
+    "CRWD": "Cybersecurity", "NOW": "Software - IT Services", "PLTR": "Data Analytics",
+    "INTU": "Financial Soft", "ISRG": "Medical Devices", "AMGN": "Biotech",
+    "QQQM": "Tech / Growth ETF", "QQQ": "Tech / Growth ETF", "VGT": "Technology ETF",
+    "SMH": "Semiconductor ETF", "SCHG": "Growth ETF", "VOO": "S&P 500 ETF",
+    "SCHD": "Dividend ETF", "VYM": "Dividend ETF", "VIG": "Dividend ETF"
 }
 
-B_INCEPT = {"SMH": "2011-12-20", "QQQ": "1999-03-10", "QQQM": "2020-10-13", "MGK": "2007-12-17", "SCHG": "2009-12-11", "FTEC": "2013-10-21", "VOO": "2010-09-07", "SPY": "1993-01-22", "VGT": "2004-01-26", "VYM": "2006-11-10", "SCHD": "2011-10-20", "JEPQ": "2022-05-03"}
+B_INCEPT = {
+    "SMH": "2011-12-20", "QQQ": "1999-03-10", "QQQM": "2020-10-13",
+    "MGK": "2007-12-17", "SCHG": "2009-12-11", "FTEC": "2013-10-21",
+    "VOO": "2010-09-07", "SPY": "1993-01-22", "VGT": "2004-01-26",
+    "VYM": "2006-11-10", "SCHD": "2011-10-20", "VIG": "2006-04-21",
+    "JEPQ": "2022-05-03"
+}
 
-# --- CORE ENGINE ---
-def merge_goog(df):
-    df['Symbol'] = df['Symbol'].replace({'GOOGL': 'GOOG'})
-    return df.groupby('Symbol', as_index=False)['Weight'].sum().sort_values(by='Weight', ascending=False)
+
+# --- HELPERS ---
+def parse_tickers(text):
+    tickers = []
+    seen = set()
+    for raw in str(text).replace("\n", ",").split(","):
+        ticker = raw.strip().upper()
+        if ticker and ticker not in seen:
+            tickers.append(ticker)
+            seen.add(ticker)
+    return tickers
+
+
+def pct_or_na(value):
+    return f"{value:.2%}" if value is not None and pd.notnull(value) else "N/A"
+
+
+def normalize_ratio(value, default=None):
+    try:
+        if value is None or pd.isna(value):
+            return default
+        value = float(value)
+        if value > 1:
+            value = value / 100
+        return value
+    except Exception:
+        return default
+
+
+def index_tz(index):
+    return getattr(index, "tz", None)
+
+
+def now_for_index(index):
+    tz = index_tz(index)
+    return pd.Timestamp.now(tz=tz) if tz is not None else pd.Timestamp.now()
+
+
+def timestamp_for_index(value, index):
+    ts = pd.Timestamp(value)
+    tz = index_tz(index)
+
+    if tz is None:
+        return ts.tz_localize(None) if ts.tzinfo is not None else ts
+
+    return ts.tz_localize(tz) if ts.tzinfo is None else ts.tz_convert(tz)
+
 
 def format_dataframe(df):
-    """Safely formats floats to strings to prevent Pandas/PyArrow TypeErrors."""
     df = df.copy()
+
     for col in ALL_NUM_COLS:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').apply(lambda x: f"{x:.2%}" if pd.notnull(x) else "-")
-    if 'Price' in df.columns:
-        df['Price'] = pd.to_numeric(df['Price'], errors='coerce').apply(lambda x: f"${x:.2f}" if pd.notnull(x) else "-")
+            df[col] = pd.to_numeric(df[col], errors="coerce").apply(
+                lambda x: f"{x:.2%}" if pd.notnull(x) else "-"
+            )
+
+    if "Price" in df.columns:
+        df["Price"] = pd.to_numeric(df["Price"], errors="coerce").apply(
+            lambda x: f"${x:.2f}" if pd.notnull(x) else "-"
+        )
+
     return df
 
-@st.cache_data(ttl=3600)
+
+def return_by_sessions(close, sessions):
+    if len(close) <= sessions:
+        return None
+
+    start = float(close.iloc[-sessions - 1])
+    end = float(close.iloc[-1])
+
+    return (end / start) - 1 if start > 0 else None
+
+
+def ytd_return(close):
+    if close.empty:
+        return None
+
+    year = now_for_index(close.index).year
+    start_ts = timestamp_for_index(f"{year}-01-01", close.index)
+
+    before_start = close[close.index < start_ts]
+    after_start = close[close.index >= start_ts]
+
+    if not before_start.empty:
+        start = float(before_start.iloc[-1])
+    elif not after_start.empty:
+        start = float(after_start.iloc[0])
+    else:
+        return None
+
+    end = float(close.iloc[-1])
+    return (end / start) - 1 if start > 0 else None
+
+
+def period_total_return(close, years):
+    if close.empty:
+        return None
+
+    target = close.index[-1] - pd.DateOffset(years=years)
+
+    if target < close.index[0]:
+        return None
+
+    try:
+        idx = close.index.get_indexer([target], method="nearest")[0]
+    except Exception:
+        return None
+
+    if idx < 0:
+        return None
+
+    gap_days = abs((close.index[idx] - target).days)
+    max_gap_days = 45 if years == 1 else 100
+
+    if gap_days > max_gap_days:
+        return None
+
+    start = float(close.iloc[idx])
+    end = float(close.iloc[-1])
+
+    return (end / start) - 1 if start > 0 else None
+
+
+def dividend_growth_streak(annual_div):
+    annual_div = annual_div[annual_div > 0].sort_index()
+
+    if len(annual_div) < 2:
+        return 0
+
+    streak = 0
+    values = annual_div.values
+
+    for i in range(len(values) - 1, 0, -1):
+        if values[i] > values[i - 1]:
+            streak += 1
+        else:
+            break
+
+    return streak
+
+
+def merge_goog(df):
+    if df.empty:
+        return pd.DataFrame(columns=["Symbol", "Weight"])
+
+    df = df.copy()
+    df["Symbol"] = df["Symbol"].astype(str).str.strip().str.upper().replace({"GOOGL": "GOOG"})
+    df["Weight"] = pd.to_numeric(df["Weight"], errors="coerce")
+
+    return (
+        df.dropna(subset=["Symbol", "Weight"])
+        .groupby("Symbol", as_index=False)["Weight"]
+        .sum()
+        .sort_values(by="Weight", ascending=False)
+    )
+
+
+def coerce_weight(value):
+    try:
+        if value is None or pd.isna(value):
+            return None
+
+        if isinstance(value, str):
+            has_percent = "%" in value
+            value = float(value.replace("%", "").replace(",", "").strip())
+            if has_percent:
+                value = value / 100
+        else:
+            value = float(value)
+
+        if value > 1:
+            value = value / 100
+
+        return value if 0 <= value <= 1 else None
+    except Exception:
+        return None
+
+
+def ticker_like_score(series):
+    sample = series.dropna().astype(str).str.strip().head(30)
+
+    if sample.empty:
+        return 0
+
+    return sample.str.match(r"^[A-Za-z][A-Za-z0-9.\-]{0,10}$").mean()
+
+
+def normalize_holdings_frame(raw):
+    if raw is None:
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+    if isinstance(raw, pd.Series):
+        df = raw.reset_index()
+    else:
+        df = raw.copy().reset_index()
+
+    if df.empty:
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+    df.columns = [
+        "_".join(map(str, col)).strip() if isinstance(col, tuple) else str(col)
+        for col in df.columns
+    ]
+
+    symbol_col = max(df.columns, key=lambda col: ticker_like_score(df[col]))
+    if ticker_like_score(df[symbol_col]) < 0.4:
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+    weight_scores = []
+    for col in df.columns:
+        if col == symbol_col:
+            continue
+
+        parsed = df[col].map(coerce_weight)
+        parse_score = parsed.notna().mean()
+        name_bonus = 0.5 if any(x in col.lower() for x in ["weight", "percent", "%", "holding"]) else 0
+
+        if parse_score > 0:
+            weight_scores.append((parse_score + name_bonus, col))
+
+    if not weight_scores:
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+    weight_col = max(weight_scores)[1]
+
+    out = df[[symbol_col, weight_col]].copy()
+    out.columns = ["Symbol", "Raw_Weight"]
+
+    out["Symbol"] = out["Symbol"].astype(str).str.strip().str.upper()
+    out["Raw_Weight"] = out["Raw_Weight"].map(coerce_weight)
+
+    out = out.dropna(subset=["Symbol", "Raw_Weight"])
+    out = out[out["Symbol"].str.match(r"^[A-Z0-9.\-]+$")]
+    out = out[out["Raw_Weight"] > 0]
+
+    return out[["Symbol", "Raw_Weight"]]
+
+
+# --- DATA ENGINE ---
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_full_stats(ticker):
+    ticker = ticker.strip().upper()
+
+    if not ticker:
+        return None
+
     try:
         stock = yf.Ticker(ticker)
         hist = stock.history(period="max", auto_adjust=True)
-        div = stock.dividends
-        info = stock.info
+
+        if hist is None or hist.empty or "Close" not in hist.columns:
+            return None
+
+        close = hist["Close"].dropna()
+
+        if close.empty:
+            return None
+
+        try:
+            div = stock.dividends
+            if div is None:
+                div = pd.Series(dtype=float)
+        except Exception:
+            div = pd.Series(dtype=float)
+
+        try:
+            info = stock.info or {}
+        except Exception:
+            info = {}
+
     except Exception:
         return None
-    if hist.empty: return None
 
-    p = hist['Close'].iloc[-1]
-    y_ttm = div[div.index >= (pd.Timestamp.now().tz_localize(div.index.dtype.tz) - pd.Timedelta(days=365))].sum() / p if not div.empty else 0
-    y_fwd = y_ttm if 'ETF' in info.get('quoteType','').upper() else info.get('dividendYield', 0)
-
-    m = {'Ticker': ticker, 'Price': p, 'Industry': IND_MAP.get(ticker, "ETF/Fund"), 'Inception': B_INCEPT.get(ticker, "N/A"), 'Yield (Fwd)': y_fwd, 'Yield (TTM)': y_ttm}
+    price = float(close.iloc[-1])
+    if price <= 0:
+        return None
 
     if not div.empty:
-        annual_div = div.groupby(div.index.year).sum()
-        completed = annual_div[annual_div.index < datetime.now().year].sort_index(ascending=False)
-        streak = next((i for i in range(len(completed)-1) if completed.iloc[i] <= completed.iloc[i+1]), len(completed)-1) if len(completed) > 1 else 0
-    else: streak = 0
-
-    cnt = div[div.index.year == (datetime.now().year - 1)].count() if not div.empty else 0
-    m['Streak'] = streak
-    m['Freq'] = "Mo" if cnt >= 11 else "Qr" if cnt >= 3 else "Yr" if cnt >= 1 else "-"
-
-    m['1D'] = (p - hist['Close'].iloc[-2]) / hist['Close'].iloc[-2] if len(hist)>1 else None
-    m['1W'] = (p - hist['Close'].iloc[-6]) / hist['Close'].iloc[-6] if len(hist)>5 else None
-    m['1M'] = (p - hist['Close'].iloc[-22]) / hist['Close'].iloc[-22] if len(hist)>21 else None
-    ytd = hist[hist.index >= pd.Timestamp(f"{datetime.now().year}-01-01").tz_localize(hist.index.dtype.tz)]
-    m['YTD'] = (p - ytd['Open'].iloc[0]) / ytd['Open'].iloc[0] if not ytd.empty else None
-
-    for y in [1, 3, 5, 10, 15]:
-        target = hist.index[-1] - timedelta(days=y*365)
-        try:
-            idx = hist.index.get_indexer([target], method='nearest')[0]
-            if idx >= 0 and abs((hist.index[idx] - target).days) < 100:
-                sp = hist['Close'].iloc[idx]
-                m[f'{y}Y Total'] = (p - sp) / sp
-                m[f'{y}Y CAGR'] = (p / sp) ** (1/y) - 1 if y > 1 else None
-            else: m[f'{y}Y Total'], m[f'{y}Y CAGR'] = None, None
-        except Exception:
-            m[f'{y}Y Total'], m[f'{y}Y CAGR'] = None, None
-
-    if not div.empty:
-        ly = datetime.now().year - 1
-        for y in [3, 5, 10, 15]:
-            try:
-                if ly in annual_div.index and (ly-y) in annual_div.index and annual_div.loc[ly-y] > 0:
-                    m[f'{y}Y Div CAGR'] = (annual_div.loc[ly] / annual_div.loc[ly-y]) ** (1/y) - 1
-                else: m[f'{y}Y Div CAGR'] = None
-            except Exception:
-                m[f'{y}Y Div CAGR'] = None
+        cutoff = now_for_index(div.index) - pd.Timedelta(days=365)
+        y_ttm = float(div[div.index >= cutoff].sum()) / price
     else:
-        for y in [3, 5, 10, 15]: m[f'{y}Y Div CAGR'] = None
+        y_ttm = 0.0
+
+    quote_type = str(info.get("quoteType", "")).upper()
+    fwd_yield = normalize_ratio(info.get("dividendYield"), default=None)
+
+    if "ETF" in quote_type or "FUND" in quote_type or fwd_yield is None:
+        y_fwd = y_ttm
+    else:
+        y_fwd = fwd_yield
+
+    industry = IND_MAP.get(ticker) or info.get("industry") or info.get("category") or "ETF/Fund"
+
+    m = {
+        "Ticker": ticker,
+        "Price": price,
+        "Industry": industry,
+        "Inception": B_INCEPT.get(ticker, "N/A"),
+        "Yield (Fwd)": y_fwd,
+        "Yield (TTM)": y_ttm,
+    }
+
+    if not div.empty:
+        current_year = now_for_index(div.index).year
+        annual_div = div.groupby(div.index.year).sum()
+        completed = annual_div[annual_div.index < current_year]
+        m["Streak"] = dividend_growth_streak(completed)
+
+        last_year = current_year - 1
+        div_count = int(div[div.index.year == last_year].count())
+    else:
+        annual_div = pd.Series(dtype=float)
+        current_year = pd.Timestamp.now().year
+        m["Streak"] = 0
+        div_count = 0
+
+    m["Freq"] = "Mo" if div_count >= 11 else "Qr" if div_count >= 3 else "Yr" if div_count >= 1 else "-"
+
+    m["1D"] = return_by_sessions(close, 1)
+    m["1W"] = return_by_sessions(close, 5)
+    m["1M"] = return_by_sessions(close, 21)
+    m["YTD"] = ytd_return(close)
+
+    for years in [1, 3, 5, 10, 15]:
+        total = period_total_return(close, years)
+        m[f"{years}Y Total"] = total
+        m[f"{years}Y CAGR"] = (
+            ((1 + total) ** (1 / years)) - 1
+            if years > 1 and total is not None and total > -1
+            else None
+        )
+
+    if not div.empty:
+        last_completed_year = current_year - 1
+
+        for years in [3, 5, 10, 15]:
+            try:
+                start_year = last_completed_year - years
+
+                if (
+                    last_completed_year in annual_div.index
+                    and start_year in annual_div.index
+                    and annual_div.loc[start_year] > 0
+                ):
+                    m[f"{years}Y Div CAGR"] = (
+                        (annual_div.loc[last_completed_year] / annual_div.loc[start_year]) ** (1 / years)
+                    ) - 1
+                else:
+                    m[f"{years}Y Div CAGR"] = None
+            except Exception:
+                m[f"{years}Y Div CAGR"] = None
+    else:
+        for years in [3, 5, 10, 15]:
+            m[f"{years}Y Div CAGR"] = None
 
     return m
 
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_holdings(ticker):
     try:
-        df = yf.Ticker(ticker).funds_data.top_holdings
-        if not df.empty:
-            df = df.to_frame() if isinstance(df, pd.Series) else df
-            df = df.reset_index().iloc[:, [0, -1]]
-            df.columns = ['Symbol', 'Raw_Weight']
-            return df
+        funds_data = yf.Ticker(ticker).funds_data
+        raw = getattr(funds_data, "top_holdings", None)
+
+        if callable(raw):
+            raw = raw()
+
+        return normalize_holdings_frame(raw)
     except Exception:
-        pass
-    return pd.DataFrame()
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+
+def get_stats_for_tickers(tickers):
+    data = []
+    failed = []
+
+    for ticker in tickers:
+        stats = get_full_stats(ticker)
+        if stats:
+            data.append(stats)
+        else:
+            failed.append(ticker)
+
+    if failed:
+        st.warning(f"No usable market data for: {', '.join(failed)}")
+
+    return data
+
+
+def build_blended_holdings(etfs, weights):
+    dfs = []
+
+    for ticker in etfs:
+        weight = weights.get(ticker, 0)
+
+        if weight <= 0:
+            continue
+
+        df = get_holdings(ticker)
+
+        if not df.empty:
+            df = df.copy()
+            df["Weight"] = df["Raw_Weight"] * weight
+            dfs.append(df[["Symbol", "Weight"]])
+
+    if not dfs:
+        return pd.DataFrame(columns=["Symbol", "Weight", "Weight %", "Industry"])
+
+    full = merge_goog(pd.concat(dfs, ignore_index=True))
+    full["Weight %"] = (full["Weight"] * 100).round(2)
+    full["Industry"] = full["Symbol"].apply(lambda x: IND_MAP.get(x, "Diversified / Other"))
+
+    return full
+
+
+def calculate_blended_performance(weights):
+    stats_by_ticker = {}
+
+    for ticker, weight in weights.items():
+        if weight <= 0:
+            continue
+
+        stats = get_full_stats(ticker)
+        if stats:
+            stats_by_ticker[ticker] = stats
+
+    period_sources = {
+        "1W": ("1W", None),
+        "1M": ("1M", None),
+        "YTD": ("YTD", None),
+        "1Y Total": ("1Y Total", None),
+        "3Y CAGR": ("3Y Total", 3),
+        "5Y CAGR": ("5Y Total", 5),
+        "10Y CAGR": ("10Y Total", 10),
+        "15Y CAGR": ("15Y Total", 15),
+    }
+
+    results = {}
+
+    for label, (source_col, years) in period_sources.items():
+        weighted_total = 0.0
+        valid_weight = 0.0
+
+        for ticker, stats in stats_by_ticker.items():
+            value = stats.get(source_col)
+            weight = weights.get(ticker, 0)
+
+            if value is not None and pd.notnull(value):
+                weighted_total += value * weight
+                valid_weight += weight
+
+        if valid_weight <= 0:
+            results[label] = None
+            continue
+
+        total_return = weighted_total / valid_weight
+
+        if years:
+            results[label] = ((1 + total_return) ** (1 / years)) - 1 if total_return > -1 else None
+        else:
+            results[label] = total_return
+
+    return results
+
 
 # --- UI TABS ---
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🚀 X-Ray", "🆚 Benchmark", "📈 Dividends", "🔍 Deep Dive", "👀 Watchlist", "📰 Insights & Updates"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "🚀 X-Ray",
+    "🆚 Benchmark",
+    "📈 Dividends",
+    "🔍 Deep Dive",
+    "👀 Watchlist",
+    "📰 Insights & Updates"
+])
+
 
 # --- TAB 1: X-RAY ---
 with tab1:
     st.header("Portfolio X-Ray")
-    etfs = [x.strip().upper() for x in st.text_input("ETFs to Blend:", DEFAULT_PORT).split(',')]
-    cols = st.columns(len(etfs) if len(etfs) > 0 else 1)
-    raw_weights = {}
-    for i, t in enumerate(etfs):
-        with cols[i]: raw_weights[t] = st.slider(f"{t} %", 0, 100, 100//len(etfs)) / 100.0
 
-    total_w = sum(raw_weights.values())
-    if total_w > 0:
-        weights = {t: w / total_w for t, w in raw_weights.items()}
-        st.caption(f"Sliders sum to {total_w*100:.0f}% — normalized to 100% for the math below.")
+    etfs = parse_tickers(st.text_input("ETFs to Blend:", DEFAULT_PORT))
+
+    if not etfs:
+        st.info("Enter at least one ETF ticker.")
     else:
-        weights = raw_weights
+        cols = st.columns(len(etfs))
+        raw_weights = {}
+        default_weight = int(round(100 / len(etfs)))
 
-    if st.button("Analyze Blended Holdings"):
-        st.subheader("📈 Blended Performance (Weighted Average)")
-        periods = ['1W', '1M', 'YTD', '1Y Total', '3Y CAGR', '5Y CAGR', '10Y CAGR', '15Y CAGR']
-        b_stats = {p: 0.0 for p in periods}
-        v_weights = {p: 0.0 for p in periods}
+        for i, ticker in enumerate(etfs):
+            with cols[i]:
+                raw_weights[ticker] = st.slider(
+                    f"{ticker} %",
+                    min_value=0,
+                    max_value=100,
+                    value=default_weight,
+                    key=f"weight_{ticker}"
+                ) / 100.0
 
-        for t in etfs:
-            if weights[t] > 0:
-                stats = get_full_stats(t)
-                if stats:
-                    for p in periods:
-                        if stats.get(p) is not None:
-                            b_stats[p] += stats[p] * weights[t]
-                            v_weights[p] += weights[t]
+        total_w = sum(raw_weights.values())
 
-        m_cols = st.columns(len(periods))
-        for i, p in enumerate(periods):
-            vw = v_weights[p]
-            m_cols[i].metric(p, f"{(b_stats[p] / vw):.2%}" if vw > 0.1 else "N/A")
-        st.markdown("---")
+        if total_w > 0:
+            weights = {ticker: weight / total_w for ticker, weight in raw_weights.items()}
+            st.caption(f"Sliders sum to {total_w * 100:.0f}% - normalized to 100% for the math below.")
+        else:
+            weights = raw_weights
+            st.warning("Set at least one ETF weight above 0.")
 
-        dfs = []
-        for t in etfs:
-            if weights[t] > 0:
-                df = get_holdings(t)
-                if not df.empty:
-                    df['Weight'] = df['Raw_Weight'] * weights[t]
-                    dfs.append(df)
-        if dfs:
-            full = merge_goog(pd.concat(dfs))
-            full['Weight %'] = (full['Weight'] * 100).round(2)
-            full['Industry'] = full['Symbol'].apply(lambda x: IND_MAP.get(x, "Diversified / Other"))
+        if st.button("Analyze Blended Holdings", key="analyze_blended") and total_w > 0:
+            st.subheader("📈 Blended Performance")
 
-            c1, c2 = st.columns([2,1])
-            with c1:
-                fig = px.treemap(full.head(40), path=[px.Constant("Portfolio"), 'Symbol'], values='Weight %', custom_data=['Industry'], title="Top Holdings")
-                fig.update_traces(textinfo="label+value", texttemplate="%{label}<br>%{customdata[0]}<br>%{value:.2f}%")
-                st.plotly_chart(fig, use_container_width=True)
-            with c2: st.dataframe(full[['Symbol', 'Industry', 'Weight %']].head(20), height=500)
+            blended_stats = calculate_blended_performance(weights)
+            metric_cols = st.columns(len(PERF_PERIODS))
+
+            for i, period in enumerate(PERF_PERIODS):
+                metric_cols[i].metric(period, pct_or_na(blended_stats.get(period)))
+
+            st.markdown("---")
+
+            full = build_blended_holdings(etfs, weights)
+
+            if full.empty:
+                st.warning("Could not load holdings data for the selected ETFs.")
+            else:
+                c1, c2 = st.columns([2, 1])
+
+                with c1:
+                    fig = px.treemap(
+                        full.head(40),
+                        path=[px.Constant("Portfolio"), "Symbol"],
+                        values="Weight %",
+                        custom_data=["Industry"],
+                        title="Top Holdings"
+                    )
+                    fig.update_traces(
+                        textinfo="label+value",
+                        texttemplate="%{label}<br>%{customdata[0]}<br>%{value:.2f}%"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                with c2:
+                    st.dataframe(
+                        full[["Symbol", "Industry", "Weight %"]].head(20),
+                        height=500,
+                        hide_index=True
+                    )
+
 
 # --- TAB 2: BENCHMARK ---
 with tab2:
     st.header("Portfolio vs. Benchmark")
+
     cp, cm = st.columns(2)
-    with cp: p_list = [x.strip().upper() for x in st.text_input("Your Portfolio (Editable):", DEFAULT_PORT).split(',')]
-    with cm: m_list = [x.strip().upper() for x in st.text_input("Benchmark(s):", DEFAULT_BENCH).split(',')]
 
-    if st.button("Compare"):
-        p_stats = [s for s in (get_full_stats(t) for t in p_list) if s]
-        m_stats = [s for s in (get_full_stats(t) for t in m_list) if s]
-        if p_stats and m_stats:
-            df_p = pd.DataFrame(p_stats)
-            avg_p = {c: df_p[c].mean() for c in ALL_NUM_COLS if c in df_p.columns}
-            avg_p['Ticker'] = "PORTFOLIO AVG"
-            avg_p['Inception'] = "-"
+    with cp:
+        p_list = parse_tickers(st.text_input("Your Portfolio (Editable):", DEFAULT_PORT, key="bench_port"))
 
-            final = pd.DataFrame([avg_p] + m_stats)[['Ticker', 'Inception'] + ALL_NUM_COLS].dropna(axis=1, how='all')
-            final_formatted = format_dataframe(final)
-            st.dataframe(final_formatted, hide_index=True)
+    with cm:
+        m_list = parse_tickers(st.text_input("Benchmark(s):", DEFAULT_BENCH, key="bench_market"))
+
+    if st.button("Compare", key="compare"):
+        if not p_list or not m_list:
+            st.info("Enter at least one portfolio ticker and one benchmark ticker.")
+        else:
+            p_stats = get_stats_for_tickers(p_list)
+            m_stats = get_stats_for_tickers(m_list)
+
+            if p_stats and m_stats:
+                df_p = pd.DataFrame(p_stats)
+
+                avg_p = {
+                    col: pd.to_numeric(df_p[col], errors="coerce").mean()
+                    for col in ALL_NUM_COLS
+                    if col in df_p.columns
+                }
+                avg_p["Ticker"] = "PORTFOLIO AVG"
+                avg_p["Inception"] = "-"
+
+                final = pd.DataFrame([avg_p] + m_stats)
+                final_cols = ["Ticker", "Inception"] + [col for col in ALL_NUM_COLS if col in final.columns]
+                final = final[final_cols].dropna(axis=1, how="all")
+
+                st.dataframe(format_dataframe(final), hide_index=True)
+
 
 # --- TAB 3: DIVIDENDS ---
 with tab3:
     st.header("Dividend & Growth Data")
-    t_list = [x.strip().upper() for x in st.text_area("Tickers", DEFAULT_PORT).split(',')]
-    if st.button("Load Dividends"):
-        data = [s for s in (get_full_stats(t) for t in t_list) if s]
-        if data:
-            df = pd.DataFrame(data)
-            avg_data = {c: df[c].mean() for c in ALL_NUM_COLS if c in df.columns}
-            avg_data.update({'Ticker': "AVERAGE", 'Inception': "-", 'Industry': "-", 'Price': None, 'Streak': None, 'Freq': "-"})
 
-            final = pd.concat([df, pd.DataFrame([avg_data])], ignore_index=True)
-            cols = ['Ticker', 'Price', 'Industry', 'Inception', 'Streak', 'Freq'] + ALL_NUM_COLS
-            final = final[[c for c in cols if c in final.columns]]
+    t_list = parse_tickers(st.text_area("Tickers", DEFAULT_PORT))
 
-            final_formatted = format_dataframe(final)
-            st.dataframe(final_formatted, height=500)
+    if st.button("Load Dividends", key="load_dividends"):
+        if not t_list:
+            st.info("Enter at least one ticker.")
+        else:
+            data = get_stats_for_tickers(t_list)
+
+            if data:
+                df = pd.DataFrame(data)
+
+                avg_data = {
+                    col: pd.to_numeric(df[col], errors="coerce").mean()
+                    for col in ALL_NUM_COLS
+                    if col in df.columns
+                }
+                avg_data.update({
+                    "Ticker": "AVERAGE",
+                    "Inception": "-",
+                    "Industry": "-",
+                    "Price": None,
+                    "Streak": None,
+                    "Freq": "-"
+                })
+
+                final = pd.concat([df, pd.DataFrame([avg_data])], ignore_index=True)
+
+                cols = ["Ticker", "Price", "Industry", "Inception", "Streak", "Freq"] + ALL_NUM_COLS
+                final = final[[col for col in cols if col in final.columns]]
+
+                st.dataframe(format_dataframe(final), height=500, hide_index=True)
+
 
 # --- TAB 4: DEEP DIVE ---
 with tab4:
     st.header("Multi-ETF Deep Dive")
-    deep_tickers = [x.strip().upper() for x in st.text_input("Tickers:", DEFAULT_PORT, key="deep_dive_tickers").split(',')]
-    if st.button("Inspect ETFs"):
-        for t in deep_tickers:
-            st.subheader(f"Analysis for {t} | Inception: {B_INCEPT.get(t, 'N/A')}")
-            df = get_holdings(t)
-            if not df.empty:
-                df = merge_goog(df.rename(columns={'Symbol': 'Symbol', 'Raw_Weight': 'Weight'}))
-                df['Weight'] = (df['Weight'] * 100).map('{:.2f}%'.format)
-                st.table(df.head(15))
+
+    deep_tickers = parse_tickers(st.text_input("Tickers:", DEFAULT_PORT, key="deep_dive_tickers"))
+
+    if st.button("Inspect ETFs", key="inspect_etfs"):
+        if not deep_tickers:
+            st.info("Enter at least one ETF ticker.")
+        else:
+            for ticker in deep_tickers:
+                st.subheader(f"Analysis for {ticker} | Inception: {B_INCEPT.get(ticker, 'N/A')}")
+
+                df = get_holdings(ticker)
+
+                if df.empty:
+                    st.warning(f"Could not load holdings for {ticker}.")
+                else:
+                    display_df = merge_goog(df.rename(columns={"Raw_Weight": "Weight"}))
+                    display_df["Weight"] = (display_df["Weight"] * 100).map("{:.2f}%".format)
+                    st.table(display_df.head(15))
+
 
 # --- TAB 5: WATCHLIST ---
 with tab5:
     st.header("Watchlist & Consideration")
-    watch_tickers = [x.strip().upper() for x in st.text_input("Tickers:", DEFAULT_WATCH, key="watch_tickers").split(',')]
-    if st.button("Update Watchlist"):
-        data = [s for s in (get_full_stats(t) for t in watch_tickers) if s]
-        if data:
-            df = pd.DataFrame(data)
-            cols = ['Ticker', 'Price', 'Industry', 'Inception'] + ALL_NUM_COLS
-            final_cols = [c for c in cols if c in df.columns]
 
-            final_formatted = format_dataframe(df[final_cols])
-            st.dataframe(final_formatted, height=500)
+    watch_tickers = parse_tickers(st.text_input("Tickers:", DEFAULT_WATCH, key="watch_tickers"))
+
+    if st.button("Update Watchlist", key="update_watchlist"):
+        if not watch_tickers:
+            st.info("Enter at least one ticker.")
+        else:
+            data = get_stats_for_tickers(watch_tickers)
+
+            if data:
+                df = pd.DataFrame(data)
+                cols = ["Ticker", "Price", "Industry", "Inception"] + ALL_NUM_COLS
+                final_cols = [col for col in cols if col in df.columns]
+
+                st.dataframe(format_dataframe(df[final_cols]), height=500, hide_index=True)
+
 
 # --- TAB 6: AI NEWS & INSIGHTS ---
 with tab6:
     st.header("📰 Deep-Dive Portfolio Insights")
 
-    st.markdown("### ⏱️ Dynamic Market Pulse (Updates Instantly)")
-    st.caption("Live performance metrics for your core holdings across Daily, Weekly, Monthly, and Annual timeframes.")
+    st.markdown("### ⏱️ Market Pulse")
+    st.caption("Cached for one hour. Market data may be delayed depending on yfinance availability.")
 
-    pulse_tickers = [x.strip().upper() for x in DEFAULT_PORT.split(',')]
-    pulse_data = [s for s in (get_full_stats(t) for t in pulse_tickers) if s]
+    pulse_tickers = parse_tickers(DEFAULT_PORT)
+    pulse_data = [stats for stats in (get_full_stats(ticker) for ticker in pulse_tickers) if stats]
 
     if pulse_data:
         df_pulse = pd.DataFrame(pulse_data)
-        pulse_cols = ['Ticker', 'Price', '1D', '1W', '1M', 'YTD']
-        df_pulse = df_pulse[[c for c in pulse_cols if c in df_pulse.columns]]
+        pulse_cols = ["Ticker", "Price", "1D", "1W", "1M", "YTD"]
+        df_pulse = df_pulse[[col for col in pulse_cols if col in df_pulse.columns]]
         st.dataframe(format_dataframe(df_pulse), hide_index=True)
     else:
-        st.warning("Could not load real-time market data.")
+        st.warning("Could not load market data.")
 
     st.markdown("---")
 
-    st.markdown("### 🤖 1-Click Gemini Ultra Intelligence Update")
-    st.markdown("Use this payload to instantly command Gemini to generate a comprehensive Daily, Weekly, Monthly, and Annual structural review of your live holdings.")
+    st.markdown("### 🤖 1-Click Gemini Intelligence Prompt")
+    st.markdown("Use this payload to generate a broader news and portfolio review.")
 
-    prompt_text = f"Give me a comprehensive news update about my investment portfolio. It is blended equally among: {DEFAULT_PORT}. Format with headings for Daily/Weekly (Short-Term Dynamics), Monthly (Medium-Term Trends), and Annual Outlook (Long-Term Fundamentals)."
+    prompt_text = (
+        "Give me a comprehensive news update about my investment portfolio. "
+        f"It is blended equally among: {', '.join(pulse_tickers)}. "
+        "Format with headings for Daily/Weekly Short-Term Dynamics, "
+        "Monthly Medium-Term Trends, and Annual Long-Term Fundamentals."
+    )
 
     st.code(prompt_text, language="text")
-    st.markdown("[🔗 **Open Gemini Ultra (Click Here)**](https://gemini.google.com/app)")
+    st.markdown("[🔗 Open Gemini](https://gemini.google.com/app)")
 
     st.markdown("---")
 
-    st.markdown("### 🧠 Executive Summary: Your Portfolio (SCHG, QQQ, VGT, SMH)")
+    st.markdown("### 🧠 Executive Summary")
+
+    equal_weights = {ticker: 1 / len(pulse_tickers) for ticker in pulse_tickers} if pulse_tickers else {}
+    core_holdings = build_blended_holdings(pulse_tickers, equal_weights) if equal_weights else pd.DataFrame()
 
     st.markdown("#### 📊 Asset Allocation & Overlap Analysis")
-    st.markdown("""
-    This portfolio is an aggressive, hyper-concentrated bet on **U.S. Mega-Cap Technology and Semiconductors**.
 
-    * **The Overlap Effect:** Because VGT (Information Technology), SCHG (Large-Cap Growth), and QQQ (Nasdaq 100) utilize market-cap weighting, they overwhelmingly hold the exact same top companies.
-    * **The Semiconductor Tilt:** By dedicating 25% of your portfolio directly to SMH (Semiconductors), you are actively layering semiconductor exposure *on top* of the semiconductor exposure already embedded in VGT, QQQ, and SCHG.
+    if not core_holdings.empty:
+        nvda_weight = core_holdings.loc[core_holdings["Symbol"] == "NVDA", "Weight"].sum()
+        msft_aapl_weight = core_holdings.loc[
+            core_holdings["Symbol"].isin(["MSFT", "AAPL"]),
+            "Weight"
+        ].sum()
+        top3_weight = core_holdings.head(3)["Weight"].sum()
 
-    **⚠️ Concentration Vulnerability**
-    If you break down the actual underlying holdings across these four ETFs, your true exposure is extraordinarily top-heavy:
-    * **Nvidia (NVDA):** You have massive exposure to NVDA. It is the #1 holding in SMH (~20%), a top 3 holding in VGT (~13%), a top 3 holding in QQQ (~7%), and a top 3 holding in SCHG (~11%). **Estimated pure portfolio exposure: ~12-13%.**
-    * **Microsoft (MSFT) & Apple (AAPL):** These two companies make up roughly 32% of VGT, 16% of QQQ, and 22% of SCHG. **Estimated pure portfolio exposure to just these two companies: ~17-18%.**
+        st.markdown(f"""
+This portfolio remains an aggressive, growth-oriented allocation concentrated in U.S. mega-cap technology and semiconductors.
 
-    **Bottom Line:** Roughly **1/3 of your entire portfolio** is dictated by the daily price movements of just three companies (NVDA, MSFT, AAPL).
-    """)
+Based on the latest available top-holdings data from yfinance:
+
+* **NVDA estimated exposure:** {nvda_weight:.2%}
+* **MSFT + AAPL estimated exposure:** {msft_aapl_weight:.2%}
+* **Top 3 holdings estimated exposure:** {top3_weight:.2%}
+
+Because SCHG, QQQ, VGT, and SMH overlap heavily, the portfolio can move more like a concentrated technology basket than a broadly diversified ETF portfolio.
+""")
+
+        st.dataframe(
+            core_holdings[["Symbol", "Industry", "Weight %"]].head(10),
+            hide_index=True
+        )
+    else:
+        st.markdown("""
+This portfolio is an aggressive, hyper-concentrated bet on U.S. mega-cap technology and semiconductors.
+
+The biggest structural risk is overlap. SCHG, QQQ, VGT, and SMH can hold many of the same large technology companies, which can make the real underlying portfolio more concentrated than the ETF count suggests.
+""")
 
     st.markdown("---")
 
-    st.markdown("#### 🚀 Primary Performance Drivers (The Bull Case)")
+    st.markdown("#### 🚀 Primary Performance Drivers")
     st.markdown("""
-    * **The AI Infrastructure Supercycle:** This portfolio is perfectly positioned to capture the ongoing capital expenditure (CapEx) boom in Artificial Intelligence. As long as hyperscalers (Meta, Google, Microsoft, Amazon) continue pouring billions into data centers and hardware, SMH (providing the chips) and VGT/QQQ (providing the cloud software infrastructure) will structurally outperform the broader market.
-    * **Interest Rate Sensitivity:** High-growth technology companies rely heavily on future cash flow valuations. A macroeconomic environment featuring declining inflation and Federal Reserve rate cuts acts as a tailwind, reducing the discount rate and expanding the P/E multiples of SCHG and QQQ.
-    * **Margin Expansion:** Unlike standard S&P 500 companies (VOO) which include lower-margin retail and manufacturing, your holdings represent the highest-margin software and hardware monopolies in the global economy.
-    """)
+* **AI infrastructure spending:** SMH and VGT benefit when cloud providers and enterprises keep spending on chips, data centers, and software infrastructure.
+* **Large-cap growth momentum:** SCHG and QQQ are heavily tied to earnings strength and valuation multiples in mega-cap growth.
+* **Rate sensitivity:** Growth-heavy portfolios can benefit when interest-rate expectations fall, but they can also reprice sharply when rates rise.
+""")
 
     st.markdown("---")
 
-    st.markdown("#### 📉 Risk Management & Vulnerabilities (The Bear Case)")
+    st.markdown("#### 📉 Risk Management & Vulnerabilities")
     st.markdown("""
-    * **Zero Defensive Capabilities:** This portfolio contains effectively 0% exposure to defensive sectors (Utilities, Consumer Staples, Healthcare). In a classic recessionary environment or a tech-led market correction (similar to 2022), this portfolio will experience drawdowns significantly deeper than the S&P 500.
-    * **Valuation Risk:** Growth stocks are currently priced for perfection. Any sign of slowing AI adoption, delayed hardware rollouts (e.g., Blackwell chip delays), or regulatory antitrust actions against Mega-Cap tech will trigger immediate algorithmic sell-offs.
-    * **The Income Gap:** The dividend yield on this portfolio is negligible (sub-0.50%). It does not generate meaningful cash flow to reinvest during market downturns, relying entirely on capital appreciation for Total Return.
-    """)
+* **Sector concentration:** The portfolio has limited defensive exposure compared with the S&P 500.
+* **Valuation risk:** If AI or mega-cap tech expectations cool, the drawdown can be larger than a broad-market benchmark.
+* **Low income:** Dividend yield is likely modest, so returns depend mainly on capital appreciation.
+""")
 
     st.markdown("---")
 
-    st.markdown("#### 🎯 Strategic Considerations for the Future")
+    st.markdown("#### 🎯 Strategic Considerations")
     st.markdown("""
-    Given your stated financial goal of **Fat FIRE ($8M+ Net Worth)** and your long time horizon, this aggressive posture is mathematically justified, provided you can stomach high volatility. However, consider the following tactical adjustments as your portfolio scales:
-
-    1.  **Introduce Yield/Value (SCHD/VYM):** As your balance grows, mitigating volatility sequence-of-returns risk becomes vital. Allocating 10-15% to a high-quality dividend growth fund (SCHD) provides a stabilizing anchor that performs well during tech corrections.
-    2.  **Consolidate Redundancy (VGT vs QQQ):** VGT and QQQ track very similar metrics. You could simplify the portfolio by dropping one and reallocating that 25% into a broader S&P 500 fund (VOO) to capture non-tech growth (Financials, Healthcare, Industrials) without sacrificing your aggressive edge.
-    """)
+1. **Add ballast if volatility becomes uncomfortable:** SCHD, VYM, VIG, or VOO can reduce single-theme dependence.
+2. **Watch overlap:** VGT, QQQ, and SCHG can duplicate the same mega-cap exposure.
+3. **Review concentration periodically:** If one or two names become too large, rebalance rules can help keep risk intentional.
+""")
 
 st.markdown("---")
