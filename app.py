@@ -1,8 +1,3 @@
-Yes, that makes sense. The issue is not just `.head(20)`: `yfinance` often only returns top holdings. This version removes the table cap and adds broader holdings sources, then falls back to yfinance when full holdings are not available.
-
-Sources used for provider holdings behavior: [State Street ETF holdings](https://www.ssga.com/us/en/intermediary/etfs/funds/the-technology-select-sector-spdr-fund-xlk), [iShares IXN page](https://www.ishares.com/us/products/239750/ishares-global-tech-etf), [VanEck SMH holdings](https://www.vaneck.com/us/en/investments/semiconductor-etf-smh/holdings/).
-
-```python
 import os
 import re
 import xml.etree.ElementTree as ET
