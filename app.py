@@ -1,7 +1,18 @@
+Yes, that makes sense. The issue is not just `.head(20)`: `yfinance` often only returns top holdings. This version removes the table cap and adds broader holdings sources, then falls back to yfinance when full holdings are not available.
+
+Sources used for provider holdings behavior: [State Street ETF holdings](https://www.ssga.com/us/en/intermediary/etfs/funds/the-technology-select-sector-spdr-fund-xlk), [iShares IXN page](https://www.ishares.com/us/products/239750/ishares-global-tech-etf), [VanEck SMH holdings](https://www.vaneck.com/us/en/investments/semiconductor-etf-smh/holdings/).
+
+```python
+import os
+import re
+import xml.etree.ElementTree as ET
+from io import BytesIO
+
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.express as px
+import requests
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Master Portfolio", layout="wide")
@@ -9,7 +20,7 @@ st.title("📊 Master Portfolio: Light Rios Edition")
 
 DEFAULT_PORT = "XLK, IXN, SMH, QQQ"
 DEFAULT_BENCH = "VOO, QQQ"
-DEFAULT_WATCH = "XLK, IXN, SMH, QQQ,"
+DEFAULT_WATCH = "XLK, IXN, SMH, QQQ"
 
 ALL_NUM_COLS = [
     "Yield (TTM)", "Yield (Fwd)", "1D", "1W", "1M", "YTD",
@@ -40,17 +51,27 @@ IND_MAP = {
     "PEP": "Beverages", "KO": "Beverages", "PANW": "Cybersecurity",
     "CRWD": "Cybersecurity", "NOW": "Software - IT Services", "PLTR": "Data Analytics",
     "INTU": "Financial Soft", "ISRG": "Medical Devices", "AMGN": "Biotech",
-    "QQQM": "Tech / Growth ETF", "QQQ": "Tech / Growth ETF", "VGT": "Technology ETF",
-    "SMH": "Semiconductor ETF", "SCHG": "Growth ETF", "VOO": "S&P 500 ETF",
-    "SCHD": "Dividend ETF", "VYM": "Dividend ETF", "VIG": "Dividend ETF"
+    "QQQM": "Tech / Growth ETF", "QQQ": "Tech / Growth ETF", "XLK": "Technology ETF",
+    "IXN": "Global Technology ETF", "VGT": "Technology ETF", "SMH": "Semiconductor ETF",
+    "SCHG": "Growth ETF", "VOO": "S&P 500 ETF", "SCHD": "Dividend ETF",
+    "VYM": "Dividend ETF", "VIG": "Dividend ETF"
 }
 
 B_INCEPT = {
-    "SMH": "2011-12-20", "QQQ": "1999-03-10", "QQQM": "2020-10-13",
-    "MGK": "2007-12-17", "SCHG": "2009-12-11", "FTEC": "2013-10-21",
-    "VOO": "2010-09-07", "SPY": "1993-01-22", "VGT": "2004-01-26",
-    "VYM": "2006-11-10", "SCHD": "2011-10-20", "VIG": "2006-04-21",
-    "JEPQ": "2022-05-03"
+    "XLK": "1998-12-16", "IXN": "2001-11-12", "SMH": "2011-12-20",
+    "QQQ": "1999-03-10", "QQQM": "2020-10-13", "MGK": "2007-12-17",
+    "SCHG": "2009-12-11", "FTEC": "2013-10-21", "VOO": "2010-09-07",
+    "SPY": "1993-01-22", "VGT": "2004-01-26", "VYM": "2006-11-10",
+    "SCHD": "2011-10-20", "VIG": "2006-04-21", "JEPQ": "2022-05-03"
+}
+
+REQUEST_HEADERS = {
+    "User-Agent": "Mozilla/5.0 portfolio research app",
+    "Accept": "*/*",
+}
+
+VANECK_DATASET_URLS = {
+    "SMH": "https://www.vaneck.com/Main/HoldingsBlock/GetDataset/?blockId=144458&pageId=233107&ticker=SMH"
 }
 
 
@@ -196,6 +217,158 @@ def dividend_growth_streak(annual_div):
     return streak
 
 
+def clean_symbol(value):
+    symbol = str(value).strip().upper()
+    symbol = re.sub(r"\s+", "", symbol)
+    return symbol
+
+
+def coerce_weight(value):
+    try:
+        if value is None or pd.isna(value):
+            return None
+
+        if isinstance(value, str):
+            has_percent = "%" in value
+            value = value.replace("%", "").replace(",", "").strip()
+            if value in {"", "-", "--"}:
+                return None
+            value = float(value)
+            if has_percent:
+                value = value / 100
+        else:
+            value = float(value)
+
+        if value > 1:
+            value = value / 100
+
+        return value if 0 <= value <= 1 else None
+    except Exception:
+        return None
+
+
+def ticker_like_score(series):
+    sample = series.dropna().astype(str).str.strip().head(50)
+
+    if sample.empty:
+        return 0
+
+    return sample.str.match(r"^[A-Za-z0-9][A-Za-z0-9.\-:]{0,20}$").mean()
+
+
+def unique_column_names(names):
+    used = {}
+    clean = []
+
+    for i, name in enumerate(names):
+        base = str(name).strip()
+        if not base or base.lower() in {"nan", "none"}:
+            base = f"col_{i}"
+
+        if base in used:
+            used[base] += 1
+            clean.append(f"{base}_{used[base]}")
+        else:
+            used[base] = 0
+            clean.append(base)
+
+    return clean
+
+
+def normalize_table_by_header(df):
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+    df = df.dropna(how="all").copy()
+
+    for row_idx, row in df.iterrows():
+        labels = [str(x).strip() for x in row.tolist()]
+        lowered = [x.lower() for x in labels]
+
+        has_symbol = any(x in {"ticker", "symbol"} or "ticker" in x or "symbol" in x for x in lowered)
+        has_weight = any("weight" in x or "% of fund" in x or "% of net" in x or "net assets" in x for x in lowered)
+
+        if has_symbol and has_weight:
+            data = df.loc[row_idx + 1:].copy()
+            data.columns = unique_column_names(labels)
+            return normalize_holdings_frame(data)
+
+    return normalize_holdings_frame(df)
+
+
+def normalize_holdings_frame(raw):
+    if raw is None:
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+    if isinstance(raw, pd.Series):
+        df = raw.reset_index()
+    else:
+        df = raw.copy().reset_index(drop=True)
+
+    if df.empty:
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+    df.columns = [
+        "_".join(map(str, col)).strip() if isinstance(col, tuple) else str(col)
+        for col in df.columns
+    ]
+
+    symbol_candidates = [
+        col for col in df.columns
+        if any(key in col.lower() for key in ["ticker", "symbol"])
+        and "cusip" not in col.lower()
+        and "isin" not in col.lower()
+    ]
+
+    weight_candidates = [
+        col for col in df.columns
+        if any(key in col.lower() for key in ["weight", "% of fund", "% of net", "net assets"])
+    ]
+
+    symbol_col = None
+    weight_col = None
+
+    if symbol_candidates and weight_candidates:
+        symbol_col = symbol_candidates[0]
+        weight_col = weight_candidates[0]
+    else:
+        scored_symbols = sorted(
+            [(ticker_like_score(df[col]), col) for col in df.columns],
+            reverse=True
+        )
+        symbol_col = scored_symbols[0][1] if scored_symbols and scored_symbols[0][0] >= 0.35 else None
+
+        weight_scores = []
+        for col in df.columns:
+            if col == symbol_col:
+                continue
+
+            parsed = df[col].map(coerce_weight)
+            parse_score = parsed.notna().mean()
+            name_bonus = 0.5 if any(x in col.lower() for x in ["weight", "percent", "%", "holding"]) else 0
+
+            if parse_score > 0:
+                weight_scores.append((parse_score + name_bonus, col))
+
+        weight_col = max(weight_scores)[1] if weight_scores else None
+
+    if symbol_col is None or weight_col is None:
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+    out = df[[symbol_col, weight_col]].copy()
+    out.columns = ["Symbol", "Raw_Weight"]
+
+    out["Symbol"] = out["Symbol"].map(clean_symbol)
+    out["Raw_Weight"] = out["Raw_Weight"].map(coerce_weight)
+
+    out = out.dropna(subset=["Symbol", "Raw_Weight"])
+    out = out[out["Raw_Weight"] > 0]
+    out = out[out["Symbol"].str.match(r"^[A-Z0-9][A-Z0-9.\-:]{0,20}$")]
+    out = out[~out["Symbol"].isin({"-", "--", "CASH", "USD", "N/A", "NA"})]
+
+    return out[["Symbol", "Raw_Weight"]]
+
+
 def merge_goog(df):
     if df.empty:
         return pd.DataFrame(columns=["Symbol", "Weight"])
@@ -212,85 +385,269 @@ def merge_goog(df):
     )
 
 
-def coerce_weight(value):
+def get_secret_or_env(name):
     try:
-        if value is None or pd.isna(value):
+        value = st.secrets.get(name)
+    except Exception:
+        value = None
+
+    return value or os.environ.get(name)
+
+
+def cell_value(value):
+    if isinstance(value, dict):
+        return value.get("d", value.get("r"))
+    return value
+
+
+def parse_xml_spreadsheet(content):
+    frames = []
+
+    try:
+        root = ET.fromstring(content)
+    except Exception:
+        return frames
+
+    ns = {"ss": "urn:schemas-microsoft-com:office:spreadsheet"}
+    index_attr = "{urn:schemas-microsoft-com:office:spreadsheet}Index"
+
+    for worksheet in root.findall(".//ss:Worksheet", ns):
+        rows = []
+
+        for row in worksheet.findall(".//ss:Row", ns):
+            values = []
+            col_index = 1
+
+            for cell in row.findall("ss:Cell", ns):
+                idx = cell.attrib.get(index_attr)
+
+                if idx:
+                    idx = int(idx)
+                    while col_index < idx:
+                        values.append(None)
+                        col_index += 1
+
+                data = cell.find("ss:Data", ns)
+                values.append(data.text if data is not None else None)
+                col_index += 1
+
+            if any(v is not None and str(v).strip() for v in values):
+                rows.append(values)
+
+        if rows:
+            frames.append(pd.DataFrame(rows))
+
+    return frames
+
+
+# --- HOLDINGS SOURCES ---
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_etf_holdings_api(ticker):
+    api_key = get_secret_or_env("ETF_HOLDINGS_API_KEY")
+
+    if not api_key:
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+    urls = [
+        f"https://etf-holdings.com/api/v1/holdings?symbol={ticker}",
+        f"https://etf-holdings.com/api/v1/holdings?ticker={ticker}",
+    ]
+
+    headers = dict(REQUEST_HEADERS)
+    headers["Authorization"] = f"Bearer {api_key}"
+
+    for url in urls:
+        try:
+            response = requests.get(url, headers=headers, timeout=20)
+
+            if response.status_code >= 400:
+                continue
+
+            payload = response.json()
+            rows = payload.get("holdings") if isinstance(payload, dict) else payload
+
+            if not rows:
+                continue
+
+            df = pd.DataFrame(rows)
+            normalized = normalize_holdings_frame(df)
+
+            if not normalized.empty:
+                return normalized
+        except Exception:
+            continue
+
+    return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_state_street_holdings(ticker):
+    url = f"https://www.ssga.com/library-content/products/fund-data/etfs/us/holdings-daily-us-en-{ticker.lower()}.xlsx"
+
+    try:
+        response = requests.get(url, headers=REQUEST_HEADERS, timeout=20)
+
+        if response.status_code != 200 or len(response.content) < 1000:
+            return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+        sheets = pd.read_excel(BytesIO(response.content), sheet_name=None, header=None)
+
+        best = pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+        for raw in sheets.values():
+            normalized = normalize_table_by_header(raw)
+
+            if len(normalized) > len(best):
+                best = normalized
+
+        return best
+    except Exception:
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_ishares_product_id(ticker):
+    url = (
+        "https://www.ishares.com/us/product-screener/product-screener-v3.jsn"
+        "?dcrPath=/templatedata/config/product-screener-v3/data/en/us-ishares/"
+        "ishares-product-screener-backend-config"
+    )
+
+    try:
+        response = requests.get(url, headers=REQUEST_HEADERS, timeout=25)
+
+        if response.status_code != 200:
             return None
 
-        if isinstance(value, str):
-            has_percent = "%" in value
-            value = float(value.replace("%", "").replace(",", "").strip())
-            if has_percent:
-                value = value / 100
-        else:
-            value = float(value)
+        payload = response.json()
+        table = payload.get("data", {}).get("tableData", {})
+        columns = [col.get("name") for col in table.get("columns", [])]
+        rows = table.get("data", [])
 
-        if value > 1:
-            value = value / 100
+        ticker_idx = columns.index("localExchangeTicker")
+        portfolio_idx = columns.index("portfolioId")
 
-        return value if 0 <= value <= 1 else None
+        for row in rows:
+            values = row.get("value", row) if isinstance(row, dict) else row
+
+            if not isinstance(values, list) or len(values) <= max(ticker_idx, portfolio_idx):
+                continue
+
+            row_ticker = str(cell_value(values[ticker_idx])).upper()
+
+            if row_ticker == ticker:
+                return cell_value(values[portfolio_idx])
     except Exception:
         return None
 
-
-def ticker_like_score(series):
-    sample = series.dropna().astype(str).str.strip().head(30)
-
-    if sample.empty:
-        return 0
-
-    return sample.str.match(r"^[A-Za-z][A-Za-z0-9.\-]{0,10}$").mean()
+    return None
 
 
-def normalize_holdings_frame(raw):
-    if raw is None:
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_ishares_holdings(ticker):
+    portfolio_id = fetch_ishares_product_id(ticker)
+
+    if not portfolio_id:
         return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
 
-    if isinstance(raw, pd.Series):
-        df = raw.reset_index()
-    else:
-        df = raw.copy().reset_index()
+    url = (
+        "https://www.blackrock.com/varnish-api/blk-one01-product-data/product-data/api/v1/get-fund-document"
+        f"?appType=PRODUCT_PAGE&appSubType=ISHARES&targetSite=us-ishares&locale=en_US"
+        f"&portfolioId={portfolio_id}&component=fundDownload&userType=individual"
+    )
 
-    if df.empty:
+    try:
+        response = requests.get(url, headers=REQUEST_HEADERS, timeout=30)
+
+        if response.status_code != 200:
+            return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+        frames = parse_xml_spreadsheet(response.content)
+        best = pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+        for raw in frames:
+            normalized = normalize_table_by_header(raw)
+
+            if len(normalized) > len(best):
+                best = normalized
+
+        return best
+    except Exception:
         return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
 
-    df.columns = [
-        "_".join(map(str, col)).strip() if isinstance(col, tuple) else str(col)
-        for col in df.columns
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_vaneck_holdings(ticker):
+    url = VANECK_DATASET_URLS.get(ticker)
+
+    if not url:
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+    try:
+        response = requests.get(url, headers=REQUEST_HEADERS, timeout=20)
+
+        if response.status_code != 200:
+            return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+        payload = response.json()
+        rows = payload.get("Holdings", [])
+
+        if not rows:
+            return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+        df = pd.DataFrame(rows)
+
+        symbol_col = "HoldingTicker" if "HoldingTicker" in df.columns else "Label"
+        weight_col = "Weight"
+
+        out = df[[symbol_col, weight_col]].copy()
+        out.columns = ["Symbol", "Raw_Weight"]
+
+        return normalize_holdings_frame(out)
+    except Exception:
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_yfinance_holdings(ticker):
+    try:
+        funds_data = yf.Ticker(ticker).funds_data
+        raw = getattr(funds_data, "top_holdings", None)
+
+        if callable(raw):
+            raw = raw()
+
+        return normalize_holdings_frame(raw)
+    except Exception:
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_holdings_with_source(ticker):
+    ticker = ticker.strip().upper()
+
+    sources = [
+        ("ETF Holdings API", fetch_etf_holdings_api),
+        ("State Street provider file", fetch_state_street_holdings),
+        ("iShares/BlackRock provider file", fetch_ishares_holdings),
+        ("VanEck provider file", fetch_vaneck_holdings),
+        ("yfinance top_holdings", fetch_yfinance_holdings),
     ]
 
-    symbol_col = max(df.columns, key=lambda col: ticker_like_score(df[col]))
-    if ticker_like_score(df[symbol_col]) < 0.4:
-        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+    for source_name, fetcher in sources:
+        df = fetcher(ticker)
 
-    weight_scores = []
-    for col in df.columns:
-        if col == symbol_col:
-            continue
+        if df is not None and not df.empty:
+            df = df.copy()
+            df["Source"] = source_name
+            return df, source_name
 
-        parsed = df[col].map(coerce_weight)
-        parse_score = parsed.notna().mean()
-        name_bonus = 0.5 if any(x in col.lower() for x in ["weight", "percent", "%", "holding"]) else 0
+    return pd.DataFrame(columns=["Symbol", "Raw_Weight", "Source"]), "No holdings source"
 
-        if parse_score > 0:
-            weight_scores.append((parse_score + name_bonus, col))
 
-    if not weight_scores:
-        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
-
-    weight_col = max(weight_scores)[1]
-
-    out = df[[symbol_col, weight_col]].copy()
-    out.columns = ["Symbol", "Raw_Weight"]
-
-    out["Symbol"] = out["Symbol"].astype(str).str.strip().str.upper()
-    out["Raw_Weight"] = out["Raw_Weight"].map(coerce_weight)
-
-    out = out.dropna(subset=["Symbol", "Raw_Weight"])
-    out = out[out["Symbol"].str.match(r"^[A-Z0-9.\-]+$")]
-    out = out[out["Raw_Weight"] > 0]
-
-    return out[["Symbol", "Raw_Weight"]]
+def get_holdings(ticker):
+    df, _source = get_holdings_with_source(ticker)
+    return df[["Symbol", "Raw_Weight"]].copy() if not df.empty else pd.DataFrame(columns=["Symbol", "Raw_Weight"])
 
 
 # --- DATA ENGINE ---
@@ -411,20 +768,6 @@ def get_full_stats(ticker):
             m[f"{years}Y Div CAGR"] = None
 
     return m
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_holdings(ticker):
-    try:
-        funds_data = yf.Ticker(ticker).funds_data
-        raw = getattr(funds_data, "top_holdings", None)
-
-        if callable(raw):
-            raw = raw()
-
-        return normalize_holdings_frame(raw)
-    except Exception:
-        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
 
 
 def get_stats_for_tickers(tickers):
@@ -579,6 +922,29 @@ with tab1:
             if full.empty:
                 st.warning("Could not load holdings data for the selected ETFs.")
             else:
+                source_notes = []
+                limited_sources = []
+
+                for ticker in etfs:
+                    df_src, source_name = get_holdings_with_source(ticker)
+                    row_count = len(df_src)
+                    source_notes.append(f"{ticker}: {row_count} rows from {source_name}")
+
+                    if source_name == "yfinance top_holdings":
+                        limited_sources.append(ticker)
+
+                st.caption(
+                    f"Showing all {len(full)} blended holdings loaded by the app. "
+                    "Scroll the holdings table to see the full list."
+                )
+                st.caption(" | ".join(source_notes))
+
+                if limited_sources:
+                    st.info(
+                        "Some ETFs are source-limited because yfinance only provides top holdings for them: "
+                        f"{', '.join(limited_sources)}. The table still shows every holding row the app could retrieve."
+                    )
+
                 c1, c2 = st.columns([2, 1])
 
                 with c1:
@@ -597,7 +963,7 @@ with tab1:
 
                 with c2:
                     st.dataframe(
-                        full[["Symbol", "Industry", "Weight %"]].head(500),
+                        full[["Symbol", "Industry", "Weight %"]],
                         height=500,
                         hide_index=True
                     )
@@ -773,13 +1139,13 @@ with tab6:
         st.markdown(f"""
 This portfolio remains an aggressive, growth-oriented allocation concentrated in U.S. mega-cap technology and semiconductors.
 
-Based on the latest available top-holdings data from yfinance:
+Based on the latest available holdings data:
 
 * **NVDA estimated exposure:** {nvda_weight:.2%}
 * **MSFT + AAPL estimated exposure:** {msft_aapl_weight:.2%}
 * **Top 3 holdings estimated exposure:** {top3_weight:.2%}
 
-Because SCHG, QQQ, VGT, and SMH overlap heavily, the portfolio can move more like a concentrated technology basket than a broadly diversified ETF portfolio.
+Because the selected ETFs can overlap heavily, the portfolio may move more like a concentrated technology basket than a broadly diversified ETF portfolio.
 """)
 
         st.dataframe(
@@ -788,17 +1154,17 @@ Because SCHG, QQQ, VGT, and SMH overlap heavily, the portfolio can move more lik
         )
     else:
         st.markdown("""
-This portfolio is an aggressive, hyper-concentrated bet on U.S. mega-cap technology and semiconductors.
+This portfolio is an aggressive, technology-heavy allocation.
 
-The biggest structural risk is overlap. SCHG, QQQ, VGT, and SMH can hold many of the same large technology companies, which can make the real underlying portfolio more concentrated than the ETF count suggests.
+The biggest structural risk is overlap. Multiple technology and growth ETFs can hold many of the same large companies, which can make the real underlying portfolio more concentrated than the ETF count suggests.
 """)
 
     st.markdown("---")
 
     st.markdown("#### 🚀 Primary Performance Drivers")
     st.markdown("""
-* **AI infrastructure spending:** SMH and VGT benefit when cloud providers and enterprises keep spending on chips, data centers, and software infrastructure.
-* **Large-cap growth momentum:** SCHG and QQQ are heavily tied to earnings strength and valuation multiples in mega-cap growth.
+* **AI infrastructure spending:** Semiconductor and technology ETFs benefit when cloud providers and enterprises keep spending on chips, data centers, and software infrastructure.
+* **Large-cap growth momentum:** QQQ and technology-heavy funds are tied to earnings strength and valuation multiples in mega-cap growth.
 * **Rate sensitivity:** Growth-heavy portfolios can benefit when interest-rate expectations fall, but they can also reprice sharply when rates rise.
 """)
 
@@ -806,7 +1172,7 @@ The biggest structural risk is overlap. SCHG, QQQ, VGT, and SMH can hold many of
 
     st.markdown("#### 📉 Risk Management & Vulnerabilities")
     st.markdown("""
-* **Sector concentration:** The portfolio has limited defensive exposure compared with the S&P 500.
+* **Sector concentration:** The portfolio may have limited defensive exposure compared with the S&P 500.
 * **Valuation risk:** If AI or mega-cap tech expectations cool, the drawdown can be larger than a broad-market benchmark.
 * **Low income:** Dividend yield is likely modest, so returns depend mainly on capital appreciation.
 """)
@@ -816,8 +1182,9 @@ The biggest structural risk is overlap. SCHG, QQQ, VGT, and SMH can hold many of
     st.markdown("#### 🎯 Strategic Considerations")
     st.markdown("""
 1. **Add ballast if volatility becomes uncomfortable:** SCHD, VYM, VIG, or VOO can reduce single-theme dependence.
-2. **Watch overlap:** VGT, QQQ, and SCHG can duplicate the same mega-cap exposure.
+2. **Watch overlap:** Technology and growth ETFs can duplicate the same mega-cap exposure.
 3. **Review concentration periodically:** If one or two names become too large, rebalance rules can help keep risk intentional.
 """)
 
 st.markdown("---")
+```
