@@ -1,13 +1,7 @@
-import os
-import re
-import xml.etree.ElementTree as ET
-from io import BytesIO
-
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.express as px
-import requests
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Master Portfolio", layout="wide")
@@ -60,25 +54,19 @@ B_INCEPT = {
     "SCHD": "2011-10-20", "VIG": "2006-04-21", "JEPQ": "2022-05-03"
 }
 
-REQUEST_HEADERS = {
-    "User-Agent": "Mozilla/5.0 portfolio research app",
-    "Accept": "*/*",
-}
-
-VANECK_DATASET_URLS = {
-    "SMH": "https://www.vaneck.com/Main/HoldingsBlock/GetDataset/?blockId=144458&pageId=233107&ticker=SMH"
-}
-
 
 # --- HELPERS ---
 def parse_tickers(text):
     tickers = []
     seen = set()
+
     for raw in str(text).replace("\n", ",").split(","):
         ticker = raw.strip().upper()
+
         if ticker and ticker not in seen:
             tickers.append(ticker)
             seen.add(ticker)
+
     return tickers
 
 
@@ -90,9 +78,12 @@ def normalize_ratio(value, default=None):
     try:
         if value is None or pd.isna(value):
             return default
+
         value = float(value)
+
         if value > 1:
             value = value / 100
+
         return value
     except Exception:
         return default
@@ -212,12 +203,6 @@ def dividend_growth_streak(annual_div):
     return streak
 
 
-def clean_symbol(value):
-    symbol = str(value).strip().upper()
-    symbol = re.sub(r"\s+", "", symbol)
-    return symbol
-
-
 def coerce_weight(value):
     try:
         if value is None or pd.isna(value):
@@ -226,9 +211,12 @@ def coerce_weight(value):
         if isinstance(value, str):
             has_percent = "%" in value
             value = value.replace("%", "").replace(",", "").strip()
-            if value in {"", "-", "--"}:
+
+            if value in {"", "-", "--", "N/A", "NA"}:
                 return None
+
             value = float(value)
+
             if has_percent:
                 value = value / 100
         else:
@@ -248,47 +236,7 @@ def ticker_like_score(series):
     if sample.empty:
         return 0
 
-    return sample.str.match(r"^[A-Za-z0-9][A-Za-z0-9.\-:]{0,20}$").mean()
-
-
-def unique_column_names(names):
-    used = {}
-    clean = []
-
-    for i, name in enumerate(names):
-        base = str(name).strip()
-        if not base or base.lower() in {"nan", "none"}:
-            base = f"col_{i}"
-
-        if base in used:
-            used[base] += 1
-            clean.append(f"{base}_{used[base]}")
-        else:
-            used[base] = 0
-            clean.append(base)
-
-    return clean
-
-
-def normalize_table_by_header(df):
-    if df is None or df.empty:
-        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
-
-    df = df.dropna(how="all").copy()
-
-    for row_idx, row in df.iterrows():
-        labels = [str(x).strip() for x in row.tolist()]
-        lowered = [x.lower() for x in labels]
-
-        has_symbol = any(x in {"ticker", "symbol"} or "ticker" in x or "symbol" in x for x in lowered)
-        has_weight = any("weight" in x or "% of fund" in x or "% of net" in x or "net assets" in x for x in lowered)
-
-        if has_symbol and has_weight:
-            data = df.loc[row_idx + 1:].copy()
-            data.columns = unique_column_names(labels)
-            return normalize_holdings_frame(data)
-
-    return normalize_holdings_frame(df)
+    return sample.str.match(r"^[A-Za-z0-9][A-Za-z0-9.\-]{0,12}$").mean()
 
 
 def normalize_holdings_frame(raw):
@@ -296,36 +244,34 @@ def normalize_holdings_frame(raw):
         return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
 
     if isinstance(raw, pd.Series):
-        df = raw.reset_index()
+        df = raw.to_frame(name="Raw_Weight").reset_index()
     else:
-        df = raw.copy().reset_index(drop=True)
+        df = raw.copy()
+
+        if not isinstance(df.index, pd.RangeIndex) or df.index.name is not None:
+            df = df.reset_index()
 
     if df.empty:
         return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
 
     df.columns = [
-        "_".join(map(str, col)).strip() if isinstance(col, tuple) else str(col)
+        "_".join(map(str, col)).strip() if isinstance(col, tuple) else str(col).strip()
         for col in df.columns
     ]
 
     symbol_candidates = [
         col for col in df.columns
-        if any(key in col.lower() for key in ["ticker", "symbol"])
+        if (
+            "symbol" in col.lower()
+            or "ticker" in col.lower()
+            or col.lower() in {"index", "holding"}
+        )
         and "cusip" not in col.lower()
         and "isin" not in col.lower()
     ]
 
-    weight_candidates = [
-        col for col in df.columns
-        if any(key in col.lower() for key in ["weight", "% of fund", "% of net", "net assets"])
-    ]
-
-    symbol_col = None
-    weight_col = None
-
-    if symbol_candidates and weight_candidates:
+    if symbol_candidates:
         symbol_col = symbol_candidates[0]
-        weight_col = weight_candidates[0]
     else:
         scored_symbols = sorted(
             [(ticker_like_score(df[col]), col) for col in df.columns],
@@ -333,19 +279,335 @@ def normalize_holdings_frame(raw):
         )
         symbol_col = scored_symbols[0][1] if scored_symbols and scored_symbols[0][0] >= 0.35 else None
 
+    weight_candidates = [
+        col for col in df.columns
+        if (
+            "weight" in col.lower()
+            or "percent" in col.lower()
+            or "%" in col.lower()
+            or "holding" in col.lower()
+        )
+    ]
+
+    if weight_candidates:
+        weight_col = weight_candidates[-1]
+    else:
         weight_scores = []
+
         for col in df.columns:
             if col == symbol_col:
                 continue
 
             parsed = df[col].map(coerce_weight)
             parse_score = parsed.notna().mean()
-            name_bonus = 0.5 if any(x in col.lower() for x in ["weight", "percent", "%", "holding"]) else 0
 
             if parse_score > 0:
-                weight_scores.append((parse_score + name_bonus, col))
+                weight_scores.append((parse_score, col))
 
         weight_col = max(weight_scores)[1] if weight_scores else None
+
+    if symbol_col is None or weight_col is None:
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+    out
+You’re right. Let’s remove the complicated version and go back to a stable version.
+
+Important: copy only the code inside the box. Do not paste the opening or closing ``` lines into GitHub.
+
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import plotly.express as px
+
+# --- CONFIGURATION ---
+st.set_page_config(page_title="Master Portfolio", layout="wide")
+st.title("📊 Master Portfolio: Light Rios Edition")
+
+DEFAULT_PORT = "XLK, IXN, SMH, QQQ"
+DEFAULT_BENCH = "VOO, QQQ"
+DEFAULT_WATCH = "XLK, IXN, SMH, QQQ"
+
+ALL_NUM_COLS = [
+    "Yield (TTM)", "Yield (Fwd)", "1D", "1W", "1M", "YTD",
+    "1Y Total", "3Y Total", "3Y CAGR", "5Y Total", "5Y CAGR",
+    "10Y Total", "10Y CAGR", "15Y Total", "15Y CAGR",
+    "3Y Div CAGR", "5Y Div CAGR", "10Y Div CAGR", "15Y Div CAGR"
+]
+
+PERF_PERIODS = ["1W", "1M", "YTD", "1Y Total", "3Y CAGR", "5Y CAGR", "10Y CAGR", "15Y CAGR"]
+
+IND_MAP = {
+    "NVDA": "Semi - GPU/AI Logic", "AMD": "Semi - CPU/GPU", "INTC": "Semi - IDM (Mfg)",
+    "TSM": "Semi - Foundry (Mfg)", "AVGO": "Semi - Networking/RF", "QCOM": "Semi - Mobile/Comms",
+    "MU": "Semi - Memory (DRAM/NAND)", "TXN": "Semi - Analog/Embedded",
+    "ADI": "Semi - Analog/Mixed Signal", "NXPI": "Semi - Auto/IoT", "ON": "Semi - Power/Sensors",
+    "MCHP": "Semi - Microcontrollers", "MPWR": "Semi - Power Management",
+    "ASML": "Semi Equip - Lithography", "AMAT": "Semi Equip - Materials Eng",
+    "LRCX": "Semi Equip - Etch/Deposition", "KLAC": "Semi Equip - Process Control",
+    "TER": "Semi Equip - Test/Measurement", "ENTG": "Semi Equip - Adv Materials",
+    "SNPS": "Software - Chip Design (EDA)", "CDNS": "Software - Chip Design (EDA)",
+    "ARM": "Semi - IP/Architecture", "MSFT": "Cloud & OS Infrastructure",
+    "ORCL": "Cloud/DB", "ADBE": "Software - Creative", "CRM": "Software - Enterprise",
+    "AAPL": "Consumer Electronics", "CSCO": "Networking Hardware", "GOOG": "Search/Ads",
+    "GOOGL": "Search/Ads", "META": "Social Media", "AMZN": "E-Commerce/Cloud",
+    "TSLA": "Auto Mfr - EV", "HD": "Home Improvement", "WMT": "Big Box Retail",
+    "LLY": "Pharma", "UNH": "Health Ins", "JPM": "Bank", "V": "Payments",
+    "MA": "Payments", "COST": "Warehouse Club", "NFLX": "Media - Streaming",
+    "PEP": "Beverages", "KO": "Beverages", "PANW": "Cybersecurity",
+    "CRWD": "Cybersecurity", "NOW": "Software - IT Services", "PLTR": "Data Analytics",
+    "INTU": "Financial Soft", "ISRG": "Medical Devices", "AMGN": "Biotech",
+    "QQQM": "Tech / Growth ETF", "QQQ": "Tech / Growth ETF", "XLK": "Technology ETF",
+    "IXN": "Global Technology ETF", "VGT": "Technology ETF", "SMH": "Semiconductor ETF",
+    "SCHG": "Growth ETF", "VOO": "S&P 500 ETF", "SCHD": "Dividend ETF",
+    "VYM": "Dividend ETF", "VIG": "Dividend ETF"
+}
+
+B_INCEPT = {
+    "XLK": "1998-12-16", "IXN": "2001-11-12", "SMH": "2011-12-20",
+    "QQQ": "1999-03-10", "QQQM": "2020-10-13", "MGK": "2007-12-17",
+    "SCHG": "2009-12-11", "FTEC": "2013-10-21", "VOO": "2010-09-07",
+    "SPY": "1993-01-22", "VGT": "2004-01-26", "VYM": "2006-11-10",
+    "SCHD": "2011-10-20", "VIG": "2006-04-21", "JEPQ": "2022-05-03"
+}
+
+
+# --- HELPERS ---
+def parse_tickers(text):
+    tickers = []
+    seen = set()
+
+    for raw in str(text).replace("\n", ",").split(","):
+        ticker = raw.strip().upper()
+
+        if ticker and ticker not in seen:
+            tickers.append(ticker)
+            seen.add(ticker)
+
+    return tickers
+
+
+def pct_or_na(value):
+    return f"{value:.2%}" if value is not None and pd.notnull(value) else "N/A"
+
+
+def normalize_ratio(value, default=None):
+    try:
+        if value is None or pd.isna(value):
+            return default
+
+        value = float(value)
+
+        if value > 1:
+            value = value / 100
+
+        return value
+    except Exception:
+        return default
+
+
+def index_tz(index):
+    return getattr(index, "tz", None)
+
+
+def now_for_index(index):
+    tz = index_tz(index)
+    return pd.Timestamp.now(tz=tz) if tz is not None else pd.Timestamp.now()
+
+
+def timestamp_for_index(value, index):
+    ts = pd.Timestamp(value)
+    tz = index_tz(index)
+
+    if tz is None:
+        return ts.tz_localize(None) if ts.tzinfo is not None else ts
+
+    return ts.tz_localize(tz) if ts.tzinfo is None else ts.tz_convert(tz)
+
+
+def format_dataframe(df):
+    df = df.copy()
+
+    for col in ALL_NUM_COLS:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").apply(
+                lambda x: f"{x:.2%}" if pd.notnull(x) else "-"
+            )
+
+    if "Price" in df.columns:
+        df["Price"] = pd.to_numeric(df["Price"], errors="coerce").apply(
+            lambda x: f"${x:.2f}" if pd.notnull(x) else "-"
+        )
+
+    return df
+
+
+def return_by_sessions(close, sessions):
+    if len(close) <= sessions:
+        return None
+
+    start = float(close.iloc[-sessions - 1])
+    end = float(close.iloc[-1])
+
+    return (end / start) - 1 if start > 0 else None
+
+
+def ytd_return(close):
+    if close.empty:
+        return None
+
+    year = now_for_index(close.index).year
+    start_ts = timestamp_for_index(f"{year}-01-01", close.index)
+
+    before_start = close[close.index < start_ts]
+    after_start = close[close.index >= start_ts]
+
+    if not before_start.empty:
+        start = float(before_start.iloc[-1])
+    elif not after_start.empty:
+        start = float(after_start.iloc[0])
+    else:
+        return None
+
+    end = float(close.iloc[-1])
+    return (end / start) - 1 if start > 0 else None
+
+
+def period_total_return(close, years):
+    if close.empty:
+        return None
+
+    target = close.index[-1] - pd.DateOffset(years=years)
+
+    if target < close.index[0]:
+        return None
+
+    try:
+        idx = close.index.get_indexer([target], method="nearest")[0]
+    except Exception:
+        return None
+
+    if idx < 0:
+        return None
+
+    gap_days = abs((close.index[idx] - target).days)
+    max_gap_days = 45 if years == 1 else 100
+
+    if gap_days > max_gap_days:
+        return None
+
+    start = float(close.iloc[idx])
+    end = float(close.iloc[-1])
+
+    return (end / start) - 1 if start > 0 else None
+
+
+def dividend_growth_streak(annual_div):
+    annual_div = annual_div[annual_div > 0].sort_index()
+
+    if len(annual_div) < 2:
+        return 0
+
+    streak = 0
+    values = annual_div.values
+
+    for i in range(len(values) - 1, 0, -1):
+        if values[i] > values[i - 1]:
+            streak += 1
+        else:
+            break
+
+    return streak
+
+
+def coerce_weight(value):
+    try:
+        if value is None or pd.isna(value):
+            return None
+
+        if isinstance(value, str):
+            has_percent = "%" in value
+            value = value.replace("%", "").replace(",", "").strip()
+
+            if value in {"", "-", "--", "N/A"}:
+                return None
+
+            value = float(value)
+
+            if has_percent:
+                value = value / 100
+        else:
+            value = float(value)
+
+        if value > 1:
+            value = value / 100
+
+        return value if 0 <= value <= 1 else None
+    except Exception:
+        return None
+
+
+def ticker_like_score(series):
+    sample = series.dropna().astype(str).str.strip().head(50)
+
+    if sample.empty:
+        return 0
+
+    return sample.str.match(r"^[A-Za-z0-9][A-Za-z0-9.\-]{0,12}$").mean()
+
+
+def normalize_holdings_frame(raw):
+    if raw is None:
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+    if isinstance(raw, pd.Series):
+        df = raw.to_frame(name="Raw_Weight").reset_index()
+    else:
+        df = raw.copy()
+
+        if not isinstance(df.index, pd.RangeIndex) or df.index.name is not None:
+            df = df.reset_index()
+
+    if df.empty:
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+    df.columns = [
+        "_".join(map(str, col)).strip() if isinstance(col, tuple) else str(col).strip()
+        for col in df.columns
+    ]
+
+    symbol_candidates = [
+        col for col in df.columns
+        if any(key in col.lower() for key in ["symbol", "ticker"])
+        and "cusip" not in col.lower()
+        and "isin" not in col.lower()
+    ]
+
+    if symbol_candidates:
+        symbol_col = symbol_candidates[0]
+    else:
+        scored_symbols = sorted(
+            [(ticker_like_score(df[col]), col) for col in df.columns],
+            reverse=True
+        )
+        symbol_col = scored_symbols[0][1] if scored_symbols and scored_symbols[0][0] >= 0.35 else None
+
+    weight_candidates = []
+
+    for col in df.columns:
+        if col == symbol_col:
+            continue
+
+        parsed = df[col].map(coerce_weight)
+        parse_score = parsed.notna().mean()
+        name_bonus = 0.5 if any(
+            key in col.lower()
+            for key in ["weight", "percent", "%", "holding percent"]
+        ) else 0
+
+        if parse_score > 0:
+            weight_candidates.append((parse_score + name_bonus, col))
+
+    weight_col = max(weight_candidates)[1] if weight_candidates else None
 
     if symbol_col is None or weight_col is None:
         return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
@@ -353,12 +615,12 @@ def normalize_holdings_frame(raw):
     out = df[[symbol_col, weight_col]].copy()
     out.columns = ["Symbol", "Raw_Weight"]
 
-    out["Symbol"] = out["Symbol"].map(clean_symbol)
+    out["Symbol"] = out["Symbol"].astype(str).str.strip().str.upper()
     out["Raw_Weight"] = out["Raw_Weight"].map(coerce_weight)
 
     out = out.dropna(subset=["Symbol", "Raw_Weight"])
     out = out[out["Raw_Weight"] > 0]
-    out = out[out["Symbol"].str.match(r"^[A-Z0-9][A-Z0-9.\-:]{0,20}$")]
+    out = out[out["Symbol"].str.match(r"^[A-Z0-9][A-Z0-9.\-]{0,12}$")]
     out = out[~out["Symbol"].isin({"-", "--", "CASH", "USD", "N/A", "NA"})]
 
     return out[["Symbol", "Raw_Weight"]]
@@ -378,271 +640,6 @@ def merge_goog(df):
         .sum()
         .sort_values(by="Weight", ascending=False)
     )
-
-
-def get_secret_or_env(name):
-    try:
-        value = st.secrets.get(name)
-    except Exception:
-        value = None
-
-    return value or os.environ.get(name)
-
-
-def cell_value(value):
-    if isinstance(value, dict):
-        return value.get("d", value.get("r"))
-    return value
-
-
-def parse_xml_spreadsheet(content):
-    frames = []
-
-    try:
-        root = ET.fromstring(content)
-    except Exception:
-        return frames
-
-    ns = {"ss": "urn:schemas-microsoft-com:office:spreadsheet"}
-    index_attr = "{urn:schemas-microsoft-com:office:spreadsheet}Index"
-
-    for worksheet in root.findall(".//ss:Worksheet", ns):
-        rows = []
-
-        for row in worksheet.findall(".//ss:Row", ns):
-            values = []
-            col_index = 1
-
-            for cell in row.findall("ss:Cell", ns):
-                idx = cell.attrib.get(index_attr)
-
-                if idx:
-                    idx = int(idx)
-                    while col_index < idx:
-                        values.append(None)
-                        col_index += 1
-
-                data = cell.find("ss:Data", ns)
-                values.append(data.text if data is not None else None)
-                col_index += 1
-
-            if any(v is not None and str(v).strip() for v in values):
-                rows.append(values)
-
-        if rows:
-            frames.append(pd.DataFrame(rows))
-
-    return frames
-
-
-# --- HOLDINGS SOURCES ---
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_etf_holdings_api(ticker):
-    api_key = get_secret_or_env("ETF_HOLDINGS_API_KEY")
-
-    if not api_key:
-        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
-
-    urls = [
-        f"https://etf-holdings.com/api/v1/holdings?symbol={ticker}",
-        f"https://etf-holdings.com/api/v1/holdings?ticker={ticker}",
-    ]
-
-    headers = dict(REQUEST_HEADERS)
-    headers["Authorization"] = f"Bearer {api_key}"
-
-    for url in urls:
-        try:
-            response = requests.get(url, headers=headers, timeout=20)
-
-            if response.status_code >= 400:
-                continue
-
-            payload = response.json()
-            rows = payload.get("holdings") if isinstance(payload, dict) else payload
-
-            if not rows:
-                continue
-
-            df = pd.DataFrame(rows)
-            normalized = normalize_holdings_frame(df)
-
-            if not normalized.empty:
-                return normalized
-        except Exception:
-            continue
-
-    return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_state_street_holdings(ticker):
-    url = f"https://www.ssga.com/library-content/products/fund-data/etfs/us/holdings-daily-us-en-{ticker.lower()}.xlsx"
-
-    try:
-        response = requests.get(url, headers=REQUEST_HEADERS, timeout=20)
-
-        if response.status_code != 200 or len(response.content) < 1000:
-            return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
-
-        sheets = pd.read_excel(BytesIO(response.content), sheet_name=None, header=None)
-
-        best = pd.DataFrame(columns=["Symbol", "Raw_Weight"])
-
-        for raw in sheets.values():
-            normalized = normalize_table_by_header(raw)
-
-            if len(normalized) > len(best):
-                best = normalized
-
-        return best
-    except Exception:
-        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_ishares_product_id(ticker):
-    url = (
-        "https://www.ishares.com/us/product-screener/product-screener-v3.jsn"
-        "?dcrPath=/templatedata/config/product-screener-v3/data/en/us-ishares/"
-        "ishares-product-screener-backend-config"
-    )
-
-    try:
-        response = requests.get(url, headers=REQUEST_HEADERS, timeout=25)
-
-        if response.status_code != 200:
-            return None
-
-        payload = response.json()
-        table = payload.get("data", {}).get("tableData", {})
-        columns = [col.get("name") for col in table.get("columns", [])]
-        rows = table.get("data", [])
-
-        ticker_idx = columns.index("localExchangeTicker")
-        portfolio_idx = columns.index("portfolioId")
-
-        for row in rows:
-            values = row.get("value", row) if isinstance(row, dict) else row
-
-            if not isinstance(values, list) or len(values) <= max(ticker_idx, portfolio_idx):
-                continue
-
-            row_ticker = str(cell_value(values[ticker_idx])).upper()
-
-            if row_ticker == ticker:
-                return cell_value(values[portfolio_idx])
-    except Exception:
-        return None
-
-    return None
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_ishares_holdings(ticker):
-    portfolio_id = fetch_ishares_product_id(ticker)
-
-    if not portfolio_id:
-        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
-
-    url = (
-        "https://www.blackrock.com/varnish-api/blk-one01-product-data/product-data/api/v1/get-fund-document"
-        f"?appType=PRODUCT_PAGE&appSubType=ISHARES&targetSite=us-ishares&locale=en_US"
-        f"&portfolioId={portfolio_id}&component=fundDownload&userType=individual"
-    )
-
-    try:
-        response = requests.get(url, headers=REQUEST_HEADERS, timeout=30)
-
-        if response.status_code != 200:
-            return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
-
-        frames = parse_xml_spreadsheet(response.content)
-        best = pd.DataFrame(columns=["Symbol", "Raw_Weight"])
-
-        for raw in frames:
-            normalized = normalize_table_by_header(raw)
-
-            if len(normalized) > len(best):
-                best = normalized
-
-        return best
-    except Exception:
-        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_vaneck_holdings(ticker):
-    url = VANECK_DATASET_URLS.get(ticker)
-
-    if not url:
-        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
-
-    try:
-        response = requests.get(url, headers=REQUEST_HEADERS, timeout=20)
-
-        if response.status_code != 200:
-            return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
-
-        payload = response.json()
-        rows = payload.get("Holdings", [])
-
-        if not rows:
-            return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
-
-        df = pd.DataFrame(rows)
-
-        symbol_col = "HoldingTicker" if "HoldingTicker" in df.columns else "Label"
-        weight_col = "Weight"
-
-        out = df[[symbol_col, weight_col]].copy()
-        out.columns = ["Symbol", "Raw_Weight"]
-
-        return normalize_holdings_frame(out)
-    except Exception:
-        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_yfinance_holdings(ticker):
-    try:
-        funds_data = yf.Ticker(ticker).funds_data
-        raw = getattr(funds_data, "top_holdings", None)
-
-        if callable(raw):
-            raw = raw()
-
-        return normalize_holdings_frame(raw)
-    except Exception:
-        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_holdings_with_source(ticker):
-    ticker = ticker.strip().upper()
-
-    sources = [
-        ("ETF Holdings API", fetch_etf_holdings_api),
-        ("State Street provider file", fetch_state_street_holdings),
-        ("iShares/BlackRock provider file", fetch_ishares_holdings),
-        ("VanEck provider file", fetch_vaneck_holdings),
-        ("yfinance top_holdings", fetch_yfinance_holdings),
-    ]
-
-    for source_name, fetcher in sources:
-        df = fetcher(ticker)
-
-        if df is not None and not df.empty:
-            df = df.copy()
-            df["Source"] = source_name
-            return df, source_name
-
-    return pd.DataFrame(columns=["Symbol", "Raw_Weight", "Source"]), "No holdings source"
-
-
-def get_holdings(ticker):
-    df, _source = get_holdings_with_source(ticker)
-    return df[["Symbol", "Raw_Weight"]].copy() if not df.empty else pd.DataFrame(columns=["Symbol", "Raw_Weight"])
 
 
 # --- DATA ENGINE ---
@@ -681,6 +678,7 @@ def get_full_stats(ticker):
         return None
 
     price = float(close.iloc[-1])
+
     if price <= 0:
         return None
 
@@ -765,12 +763,29 @@ def get_full_stats(ticker):
     return m
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_holdings(ticker):
+    ticker = ticker.strip().upper()
+
+    try:
+        funds_data = yf.Ticker(ticker).funds_data
+        raw = getattr(funds_data, "top_holdings", None)
+
+        if callable(raw):
+            raw = raw()
+
+        return normalize_holdings_frame(raw)
+    except Exception:
+        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+
 def get_stats_for_tickers(tickers):
     data = []
     failed = []
 
     for ticker in tickers:
         stats = get_full_stats(ticker)
+
         if stats:
             data.append(stats)
         else:
@@ -784,6 +799,7 @@ def get_stats_for_tickers(tickers):
 
 def build_blended_holdings(etfs, weights):
     dfs = []
+    source_counts = {}
 
     for ticker in etfs:
         weight = weights.get(ticker, 0)
@@ -792,6 +808,7 @@ def build_blended_holdings(etfs, weights):
             continue
 
         df = get_holdings(ticker)
+        source_counts[ticker] = len(df)
 
         if not df.empty:
             df = df.copy()
@@ -799,13 +816,13 @@ def build_blended_holdings(etfs, weights):
             dfs.append(df[["Symbol", "Weight"]])
 
     if not dfs:
-        return pd.DataFrame(columns=["Symbol", "Weight", "Weight %", "Industry"])
+        return pd.DataFrame(columns=["Symbol", "Weight", "Weight %", "Industry"]), source_counts
 
     full = merge_goog(pd.concat(dfs, ignore_index=True))
     full["Weight %"] = (full["Weight"] * 100).round(2)
     full["Industry"] = full["Symbol"].apply(lambda x: IND_MAP.get(x, "Diversified / Other"))
 
-    return full
+    return full, source_counts
 
 
 def calculate_blended_performance(weights):
@@ -816,6 +833,7 @@ def calculate_blended_performance(weights):
             continue
 
         stats = get_full_stats(ticker)
+
         if stats:
             stats_by_ticker[ticker] = stats
 
@@ -912,33 +930,20 @@ with tab1:
 
             st.markdown("---")
 
-            full = build_blended_holdings(etfs, weights)
+            full, source_counts = build_blended_holdings(etfs, weights)
 
             if full.empty:
                 st.warning("Could not load holdings data for the selected ETFs.")
+                st.caption("yfinance sometimes does not provide ETF holdings for every ticker.")
             else:
-                source_notes = []
-                limited_sources = []
-
-                for ticker in etfs:
-                    df_src, source_name = get_holdings_with_source(ticker)
-                    row_count = len(df_src)
-                    source_notes.append(f"{ticker}: {row_count} rows from {source_name}")
-
-                    if source_name == "yfinance top_holdings":
-                        limited_sources.append(ticker)
-
                 st.caption(
-                    f"Showing all {len(full)} blended holdings loaded by the app. "
-                    "Scroll the holdings table to see the full list."
+                    f"Showing all {len(full)} blended holdings returned by yfinance. "
+                    "Some ETFs may only expose their top holdings through yfinance."
                 )
-                st.caption(" | ".join(source_notes))
-
-                if limited_sources:
-                    st.info(
-                        "Some ETFs are source-limited because yfinance only provides top holdings for them: "
-                        f"{', '.join(limited_sources)}. The table still shows every holding row the app could retrieve."
-                    )
+                st.caption(
+                    "Holdings loaded: "
+                    + " | ".join(f"{ticker}: {count}" for ticker, count in source_counts.items())
+                )
 
                 c1, c2 = st.columns([2, 1])
 
@@ -1119,7 +1124,10 @@ with tab6:
     st.markdown("### 🧠 Executive Summary")
 
     equal_weights = {ticker: 1 / len(pulse_tickers) for ticker in pulse_tickers} if pulse_tickers else {}
-    core_holdings = build_blended_holdings(pulse_tickers, equal_weights) if equal_weights else pd.DataFrame()
+    core_holdings, _source_counts = build_blended_holdings(pulse_tickers, equal_weights) if equal_weights else (
+        pd.DataFrame(),
+        {}
+    )
 
     st.markdown("#### 📊 Asset Allocation & Overlap Analysis")
 
@@ -1132,9 +1140,9 @@ with tab6:
         top3_weight = core_holdings.head(3)["Weight"].sum()
 
         st.markdown(f"""
-This portfolio remains an aggressive, growth-oriented allocation concentrated in U.S. mega-cap technology and semiconductors.
+This portfolio remains an aggressive, growth-oriented allocation concentrated in technology and semiconductors.
 
-Based on the latest available holdings data:
+Based on the latest available holdings data from yfinance:
 
 * **NVDA estimated exposure:** {nvda_weight:.2%}
 * **MSFT + AAPL estimated exposure:** {msft_aapl_weight:.2%}
@@ -1149,7 +1157,7 @@ Because the selected ETFs can overlap heavily, the portfolio may move more like 
         )
     else:
         st.markdown("""
-This portfolio is an aggressive, technology-heavy allocation.
+This portfolio is a technology-heavy allocation.
 
 The biggest structural risk is overlap. Multiple technology and growth ETFs can hold many of the same large companies, which can make the real underlying portfolio more concentrated than the ETF count suggests.
 """)
