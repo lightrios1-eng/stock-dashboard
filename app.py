@@ -1182,4 +1182,3 @@ The biggest structural risk is overlap. Multiple technology and growth ETFs can 
 """)
 
 st.markdown("---")
-```
