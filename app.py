@@ -1,6 +1,3 @@
-You’re right. Here is the full `app.py` using the simpler working yfinance holdings path.
-
-```python
 import streamlit as st
 import yfinance as yf
 import pandas as pd
