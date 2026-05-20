@@ -7,9 +7,9 @@ import plotly.express as px
 st.set_page_config(page_title="Master Portfolio", layout="wide")
 st.title("📊 Master Portfolio: Light Rios Edition")
 
-DEFAULT_PORT = "SCHG, QQQ, VGT, SMH"
-DEFAULT_BENCH = "VOO, SCHD"
-DEFAULT_WATCH = "SCHD, VYM, VIG, VOO, SCHG, QQQ, VGT, SMH"
+DEFAULT_PORT = "XLK, IXN, SMH, QQQ"
+DEFAULT_BENCH = "VOO, QQQ"
+DEFAULT_WATCH = "XLK, IXN, SMH, QQQ,"
 
 ALL_NUM_COLS = [
     "Yield (TTM)", "Yield (Fwd)", "1D", "1W", "1M", "YTD",
@@ -597,7 +597,7 @@ with tab1:
 
                 with c2:
                     st.dataframe(
-                        full[["Symbol", "Industry", "Weight %"]].head(20),
+                        full[["Symbol", "Industry", "Weight %"]].head(500),
                         height=500,
                         hide_index=True
                     )
