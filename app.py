@@ -7,9 +7,9 @@ import plotly.express as px
 st.set_page_config(page_title="Master Portfolio", layout="wide")
 st.title("📊 Master Portfolio: Light Rios Edition")
 
-DEFAULT_PORT = "XLK, IXN, SMH, QQQ"
+DEFAULT_PORT = "QQQ, FTEC, SMH"
 DEFAULT_BENCH = "VOO, QQQ"
-DEFAULT_WATCH = "XLK, IXN, SMH, QQQ"
+DEFAULT_WATCH = "QQQ, FTEC, SMH"
 
 ALL_NUM_COLS = [
     "Yield (TTM)", "Yield (Fwd)", "1D", "1W", "1M", "YTD",
