@@ -7,6 +7,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 
 import streamlit as st
 import yfinance as yf
@@ -433,6 +434,18 @@ FIDELITY_HOLDINGS_URL = (
 
 
 def _http_get_text(url, timeout=15):
+    """Fetch with browser impersonation (curl_cffi ships with yfinance) to avoid
+    bot-blocking of plain urllib from cloud servers; falls back to urllib."""
+    try:
+        from curl_cffi import requests as curl_requests
+
+        response = curl_requests.get(url, impersonate="chrome", timeout=timeout)
+
+        if getattr(response, "status_code", 0) == 200 and response.text:
+            return response.text
+    except Exception:
+        pass
+
     request = urllib.request.Request(
         url,
         headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -440,6 +453,44 @@ def _http_get_text(url, timeout=15):
 
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read().decode("latin-1", errors="replace")
+
+
+class _TableParser(HTMLParser):
+    """Minimal stdlib HTML table extractor (no pandas.read_html dependency)."""
+
+    def __init__(self):
+        super().__init__()
+        self.tables = []
+        self._depth = 0
+        self._row = None
+        self._cell = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "table":
+            self._depth += 1
+            if self._depth == 1:
+                self.tables.append([])
+        elif self._depth and tag == "tr":
+            self._row = []
+        elif self._depth and tag in ("td", "th"):
+            self._cell = []
+
+    def handle_endtag(self, tag):
+        if tag == "table" and self._depth:
+            self._depth -= 1
+        elif self._depth and tag == "tr" and self._row is not None:
+            if self._row:
+                self.tables[-1].append(self._row)
+            self._row = None
+        elif self._depth and tag in ("td", "th") and self._cell is not None:
+            text = " ".join("".join(self._cell).split())
+            if self._row is not None:
+                self._row.append(text)
+            self._cell = None
+
+    def handle_data(self, data):
+        if self._cell is not None:
+            self._cell.append(data)
 
 
 def fetch_fidelity_holdings(ticker):
@@ -459,25 +510,39 @@ def fetch_fidelity_holdings(ticker):
     asof = asof_match.group(1) if asof_match else None
 
     try:
-        tables = pd.read_html(io.StringIO(html))
+        parser = _TableParser()
+        parser.feed(html)
     except Exception:
         return empty, None
 
-    for table in tables:
-        cols = [str(c).strip().lower() for c in table.columns]
+    for rows in parser.tables:
+        if len(rows) < 6:
+            continue
 
-        sym_idx = [i for i, c in enumerate(cols) if "symbol" in c]
-        wt_idx = [i for i, c in enumerate(cols) if "weight" in c]
+        header = [str(c).lower() for c in rows[0]]
+        sym_idx = [i for i, c in enumerate(header) if "symbol" in c]
+        wt_idx = [i for i, c in enumerate(header) if "weight" in c]
 
         if not sym_idx or not wt_idx:
             continue
 
-        out = table.iloc[:, [sym_idx[0], wt_idx[0]]].copy()
-        out.columns = ["Symbol", "Raw_Weight"]
+        si, wi = sym_idx[0], wt_idx[0]
+        records = [
+            (row[si], row[wi])
+            for row in rows[1:]
+            if len(row) > max(si, wi)
+        ]
 
-        out = out.dropna(subset=["Symbol"])
+        if not records:
+            continue
+
+        out = pd.DataFrame(records, columns=["Symbol", "Raw_Weight"])
+
         out["Symbol"] = out["Symbol"].astype(str).str.strip().str.upper()
-        out["Raw_Weight"] = pd.to_numeric(out["Raw_Weight"], errors="coerce") / 100.0
+        out["Raw_Weight"] = pd.to_numeric(
+            out["Raw_Weight"].astype(str).str.replace(",", "", regex=False),
+            errors="coerce"
+        ) / 100.0
 
         out = out.dropna(subset=["Raw_Weight"])
         out = out[out["Raw_Weight"] > 0]
@@ -494,6 +559,10 @@ def fetch_fidelity_holdings(ticker):
 
 
 # --- DATA ENGINE ---
+class _DataUnavailable(Exception):
+    """Raised inside cached fetchers so failures are NOT cached and retries work."""
+
+
 def _with_retries(fetch_fn, tries=3, base_delay=2.0):
     """Retry wrapper: Yahoo rate-limits cloud IPs (HTTP 429), one retry usually clears it."""
     last_err = None
@@ -516,13 +585,9 @@ def _with_retries(fetch_fn, tries=3, base_delay=2.0):
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
-def get_history_bundle(symbol):
-    """Max-history adjusted close (total return) + dividends for one symbol. Cached 6h."""
-    symbol = symbol.strip().upper()
-
-    if not symbol:
-        return pd.Series(dtype=float), pd.Series(dtype=float)
-
+def _history_bundle_cached(symbol):
+    """Max-history adjusted close (total return) + dividends. Cached 6h on success;
+    raises on failure so empty results are never cached."""
     def fetch():
         tk = yf.Ticker(symbol)
         hist = tk.history(period="max", auto_adjust=True)
@@ -547,9 +612,21 @@ def get_history_bundle(symbol):
     result = _with_retries(fetch)
 
     if result is None:
-        return pd.Series(dtype=float), pd.Series(dtype=float)
+        raise _DataUnavailable(symbol)
 
     return result
+
+
+def get_history_bundle(symbol):
+    symbol = symbol.strip().upper()
+
+    if not symbol:
+        return pd.Series(dtype=float), pd.Series(dtype=float)
+
+    try:
+        return _history_bundle_cached(symbol)
+    except Exception:
+        return pd.Series(dtype=float), pd.Series(dtype=float)
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -827,18 +904,8 @@ def get_full_stats(ticker):
 
 
 @st.cache_data(ttl=43200, show_spinner=False)
-def get_holdings(ticker):
-    """
-    Holdings with source label. Tries the full basket from Fidelity research first
-    (every position), then falls back to Yahoo's top-10 list.
-    Returns (DataFrame[Symbol, Raw_Weight], source_label).
-    """
-    ticker = ticker.strip().upper()
-    empty = pd.DataFrame(columns=["Symbol", "Raw_Weight"])
-
-    if not ticker:
-        return empty, "none"
-
+def _holdings_cached(ticker):
+    """Cached 12h on success; raises on failure so failures are retried, not cached."""
     full_df, asof = fetch_fidelity_holdings(ticker)
 
     if not full_df.empty:
@@ -857,9 +924,27 @@ def get_holdings(ticker):
     result = _with_retries(fetch, tries=2)
 
     if result is None:
-        return empty, "unavailable"
+        raise _DataUnavailable(ticker)
 
     return result, "top 10 only (Yahoo)"
+
+
+def get_holdings(ticker):
+    """
+    Holdings with source label. Tries the full basket from Fidelity research first
+    (every position, any issuer), then falls back to Yahoo's top-10 list.
+    Returns (DataFrame[Symbol, Raw_Weight], source_label).
+    """
+    ticker = ticker.strip().upper()
+    empty = pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+    if not ticker:
+        return empty, "none"
+
+    try:
+        return _holdings_cached(ticker)
+    except Exception:
+        return empty, "unavailable"
 
 
 def get_stats_for_tickers(tickers):
