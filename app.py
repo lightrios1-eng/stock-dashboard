@@ -1,4 +1,6 @@
+import io
 import os
+import re
 import time
 import urllib.parse
 import urllib.request
@@ -423,6 +425,74 @@ def merge_goog(df):
     )
 
 
+# --- FULL-BASKET HOLDINGS (Fidelity public ETF research, works for most US ETFs) ---
+FIDELITY_HOLDINGS_URL = (
+    "https://research2.fidelity.com/fidelity/screeners/etf/public/"
+    "etfholdings.asp?symbol={ticker}&view=Holdings"
+)
+
+
+def _http_get_text(url, timeout=15):
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    )
+
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read().decode("latin-1", errors="replace")
+
+
+def fetch_fidelity_holdings(ticker):
+    """
+    Full basket holdings (every position, not just top 10) from Fidelity's public
+    ETF research pages. Works for most US-listed ETFs regardless of issuer.
+    Returns (DataFrame[Symbol, Raw_Weight], as_of_date_or_None).
+    """
+    empty = pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+
+    try:
+        html = _http_get_text(FIDELITY_HOLDINGS_URL.format(ticker=urllib.parse.quote(ticker)))
+    except Exception:
+        return empty, None
+
+    asof_match = re.search(r"AS OF\s*([0-9/]{8,10})", html, re.IGNORECASE)
+    asof = asof_match.group(1) if asof_match else None
+
+    try:
+        tables = pd.read_html(io.StringIO(html))
+    except Exception:
+        return empty, None
+
+    for table in tables:
+        cols = [str(c).strip().lower() for c in table.columns]
+
+        sym_idx = [i for i, c in enumerate(cols) if "symbol" in c]
+        wt_idx = [i for i, c in enumerate(cols) if "weight" in c]
+
+        if not sym_idx or not wt_idx:
+            continue
+
+        out = table.iloc[:, [sym_idx[0], wt_idx[0]]].copy()
+        out.columns = ["Symbol", "Raw_Weight"]
+
+        out = out.dropna(subset=["Symbol"])
+        out["Symbol"] = out["Symbol"].astype(str).str.strip().str.upper()
+        out["Raw_Weight"] = pd.to_numeric(out["Raw_Weight"], errors="coerce") / 100.0
+
+        out = out.dropna(subset=["Raw_Weight"])
+        out = out[out["Raw_Weight"] > 0]
+        out = out[out["Symbol"].str.match(r"^[A-Z][A-Z0-9.\-]{0,9}$", na=False)]
+        out = out[~out["Symbol"].isin({"NAN", "-", "--", "CASH", "USD", "N/A", "NA"})]
+
+        total = out["Raw_Weight"].sum()
+
+        # Sanity check: a real holdings table sums to roughly 100%.
+        if len(out) >= 5 and 0.4 <= total <= 1.6:
+            return out.reset_index(drop=True), asof
+
+    return empty, None
+
+
 # --- DATA ENGINE ---
 def _with_retries(fetch_fn, tries=3, base_delay=2.0):
     """Retry wrapper: Yahoo rate-limits cloud IPs (HTTP 429), one retry usually clears it."""
@@ -758,10 +828,22 @@ def get_full_stats(ticker):
 
 @st.cache_data(ttl=43200, show_spinner=False)
 def get_holdings(ticker):
+    """
+    Holdings with source label. Tries the full basket from Fidelity research first
+    (every position), then falls back to Yahoo's top-10 list.
+    Returns (DataFrame[Symbol, Raw_Weight], source_label).
+    """
     ticker = ticker.strip().upper()
+    empty = pd.DataFrame(columns=["Symbol", "Raw_Weight"])
 
     if not ticker:
-        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+        return empty, "none"
+
+    full_df, asof = fetch_fidelity_holdings(ticker)
+
+    if not full_df.empty:
+        label = "full basket" + (f", as of {asof}" if asof else "")
+        return full_df, label
 
     def fetch():
         raw = yf.Ticker(ticker).funds_data.top_holdings
@@ -772,12 +854,12 @@ def get_holdings(ticker):
         normalized = normalize_holdings_frame(raw)
         return normalized if not normalized.empty else None
 
-    result = _with_retries(fetch)
+    result = _with_retries(fetch, tries=2)
 
     if result is None:
-        return pd.DataFrame(columns=["Symbol", "Raw_Weight"])
+        return empty, "unavailable"
 
-    return result
+    return result, "top 10 only (Yahoo)"
 
 
 def get_stats_for_tickers(tickers):
@@ -811,8 +893,8 @@ def build_blended_holdings(etfs, weights):
         if weight <= 0:
             continue
 
-        df = get_holdings(ticker)
-        source_counts[ticker] = len(df)
+        df, source = get_holdings(ticker)
+        source_counts[ticker] = f"{len(df)} holdings ({source})"
 
         if not df.empty:
             df = df.copy()
@@ -1232,17 +1314,16 @@ def main():
                 if full.empty:
                     st.warning("Could not load holdings data for the selected ETFs.")
                     st.caption(
-                        "Yahoo rate-limits holdings lookups from cloud servers. "
+                        "Both holdings sources are unreachable right now. "
                         "Wait ~1 minute and press the button again - results are cached once loaded."
                     )
                 else:
                     st.caption(
-                        f"Showing all {len(full)} blended holdings returned by yfinance "
-                        "(Yahoo only exposes each fund's top ~10 holdings)."
+                        f"Showing all {len(full)} blended underlying positions, weighted by your slider mix."
                     )
                     st.caption(
-                        "Holdings loaded: "
-                        + " | ".join(f"{ticker}: {count}" for ticker, count in source_counts.items())
+                        "Sources - "
+                        + " | ".join(f"{ticker}: {info}" for ticker, info in source_counts.items())
                     )
 
                     c1, c2 = st.columns([2, 1])
@@ -1422,12 +1503,12 @@ def main():
                         c3.metric("15Y CAGR", pct_or_na(stats.get("15Y CAGR")))
                         c4.metric("Max Div CAGR", pct_or_na(stats.get("Max Div CAGR")))
 
-                    df = get_holdings(ticker)
+                    df, holdings_source = get_holdings(ticker)
 
                     if df.empty:
                         st.warning(
-                            f"Could not load holdings for {ticker}. Yahoo rate-limits cloud servers - "
-                            "wait ~1 minute and press the button again."
+                            f"Could not load holdings for {ticker}. Both holdings sources are "
+                            "unreachable right now - wait ~1 minute and press the button again."
                         )
                     else:
                         display_df = merge_goog(df.rename(columns={"Raw_Weight": "Weight"}))
@@ -1436,10 +1517,7 @@ def main():
                             lambda x: IND_MAP.get(x, "Diversified / Other")
                         )
 
-                        st.caption(
-                            f"Top {len(display_df)} holdings via yfinance "
-                            "(Yahoo only exposes each fund's top ~10)."
-                        )
+                        st.caption(f"{len(display_df)} holdings - source: {holdings_source}.")
                         st.dataframe(
                             display_df[["Symbol", "Industry", "Weight %"]],
                             height=400,
@@ -1582,7 +1660,10 @@ def main():
                     "Overlap across these ETFs means the portfolio behaves more like a concentrated "
                     "tech basket than the fund count suggests."
                 )
-                st.caption("Estimated from each fund's top-10 holdings via yfinance - actual overlap is higher.")
+                st.caption(
+                    "Computed from each fund's published holdings (full basket where available): "
+                    + " | ".join(f"{t}: {info}" for t, info in _counts.items())
+                )
 
                 st.dataframe(
                     core_holdings[["Symbol", "Industry", "Weight %"]].head(10),
