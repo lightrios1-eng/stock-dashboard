@@ -2,9 +2,16 @@
 Refresh holdings_static.json from Fidelity's public ETF research pages.
 
 Runs in GitHub Actions on a weekly schedule (see .github/workflows/refresh-holdings.yml).
+Covers a broad universe of popular US-listed equity ETFs so that tickers never looked
+up before still get full-basket holdings in the app. Add any missing ticker to
+tickers_extra.txt (one per line) - no code change needed.
+
 Defensive by design: a ticker is only updated when the fetched table passes sanity
 checks; otherwise its previous snapshot is kept. If nothing succeeds, the file is
 left untouched and the job still exits 0 (no broken commits, ever).
+
+Note: bond, commodity/bullion, and pure-derivative ETFs are intentionally not listed -
+their holdings have no stock tickers, so they fail the sanity checks by design.
 """
 
 import json
@@ -16,10 +23,57 @@ from html.parser import HTMLParser
 from curl_cffi import requests
 
 TICKERS = [
-    "QQQ", "QQQM", "FTEC", "SMH", "VOO", "SPY", "IVV", "VTI",
-    "VGT", "XLK", "SOXX", "IXN", "IYW", "SCHG", "VUG", "MGK",
-    "SCHD", "VYM", "VIG", "JEPQ",
+    # --- Core portfolio & benchmarks ---
+    "QQQ", "QQQM", "QQQJ", "FTEC", "SMH", "VOO", "SPY", "IVV", "SPLG", "VTI", "ITOT",
+    "DIA", "ONEQ", "RSP",
+    # --- Vanguard equity ---
+    "VEA", "VWO", "VTV", "VUG", "VIG", "VYM", "VB", "VO", "VV", "VXF", "VT", "VTWO",
+    "VOOG", "VOOV", "VBR", "VBK", "VOE", "VOT", "MGC", "MGK", "MGV", "VHT", "VGT",
+    "VFH", "VDE", "VAW", "VIS", "VOX", "VCR", "VDC", "VPU", "VNQ", "VNQI", "VIGI",
+    "VYMI", "VXUS", "VEU", "VSS", "VGK", "VPL",
+    # --- iShares core / style / factor ---
+    "IJH", "IJR", "IWB", "IWM", "IWV", "IWF", "IWD", "IWO", "IWN", "IWP", "IWS",
+    "IWR", "IUSG", "IUSV", "IJK", "IJJ", "IJS", "IJT", "QUAL", "MTUM", "VLUE",
+    "USMV", "DGRO", "DVY", "HDV", "IDV",
+    # --- iShares international ---
+    "EFA", "EEM", "IEFA", "IEMG", "ACWI", "ACWX", "IXUS", "EWJ", "EWZ", "EWU",
+    "EWG", "EWC", "EWA", "EWY", "EWT", "EWH", "EWS", "EWL", "EWP", "EWQ", "EWI",
+    "INDA", "MCHI", "FXI", "EMB",
+    # --- iShares sector / industry / thematic ---
+    "SOXX", "IYW", "IYH", "IYF", "IYE", "IYZ", "IYK", "IYC", "IYJ", "IYM", "IYR",
+    "IYT", "ITB", "IHI", "IBB", "IGV", "ICLN", "ITA", "IXN", "IXC", "IXG", "IXJ",
+    "IXP", "REET", "EUFN",
+    # --- SPDR / State Street ---
+    "SPMD", "SPSM", "SPYG", "SPYV", "SPYD", "MDY", "XLK", "XLF", "XLV", "XLE",
+    "XLI", "XLY", "XLP", "XLU", "XLB", "XLRE", "XLC", "XBI", "XOP", "XHB", "XRT",
+    "XME", "XSD", "XSW", "KBE", "KRE", "KIE", "SDY", "SPDW", "SPEM", "SPTM",
+    # --- Invesco ---
+    "SPLV", "SPHD", "SPHQ", "SPGP", "PRF", "PBW",
+    # --- Schwab ---
+    "SCHB", "SCHX", "SCHG", "SCHV", "SCHA", "SCHM", "SCHD", "SCHH", "SCHF",
+    "SCHE", "SCHC", "SCHY", "SCHK", "FNDX", "FNDB", "FNDA", "FNDF", "FNDE",
+    # --- Fidelity ---
+    "FHLC", "FNCL", "FENY", "FIDU", "FDIS", "FSTA", "FUTY", "FMAT", "FCOM",
+    "FREL", "FDVV", "FQAL", "FVAL", "FBCG", "FBCV", "FDLO", "FDMO", "FDRR",
+    # --- VanEck ---
+    "MOAT", "GDX", "GDXJ", "OIH", "PPH", "RTH", "ESPO",
+    # --- First Trust ---
+    "FDN", "QQEW", "QTEC", "FVD", "RDVY", "FTCS",
+    # --- ARK ---
+    "ARKK", "ARKW", "ARKG", "ARKF", "ARKQ",
+    # --- WisdomTree ---
+    "DGRW", "DLN", "DON", "DGS",
+    # --- Dimensional / Avantis ---
+    "DFAC", "DFUS", "DFAT", "DFIV", "AVUV", "AVUS", "AVDV", "AVEM",
+    # --- JPMorgan / covered-call & income ---
+    "JEPI", "JEPQ", "QYLD",
+    # --- Capital Group ---
+    "CGGR", "CGGO", "CGDV", "CGUS",
+    # --- Pacer / Global X / misc popular ---
+    "COWZ", "CALF", "BOTZ", "LIT", "AIQ", "IGM",
 ]
+
+EXTRA_FILE = "tickers_extra.txt"
 
 URL = (
     "https://research2.fidelity.com/fidelity/screeners/etf/public/"
@@ -27,6 +81,31 @@ URL = (
 )
 
 OUT_FILE = "holdings_static.json"
+
+
+def load_universe():
+    """Built-in list plus optional tickers_extra.txt (one ticker per line, # = comment)."""
+    tickers = list(TICKERS)
+
+    try:
+        with open(EXTRA_FILE, "r", encoding="utf-8") as fh:
+            for line in fh:
+                ticker = line.split("#")[0].strip().upper()
+
+                if ticker:
+                    tickers.append(ticker)
+    except FileNotFoundError:
+        pass
+
+    seen = set()
+    unique = []
+
+    for ticker in tickers:
+        if ticker not in seen:
+            seen.add(ticker)
+            unique.append(ticker)
+
+    return unique
 
 
 class TableParser(HTMLParser):
@@ -135,15 +214,18 @@ def main():
     except Exception:
         data = {}
 
+    universe = load_universe()
+    print(f"Universe: {len(universe)} tickers\n")
+
     updated, kept = [], []
 
-    for ticker in TICKERS:
+    for ticker in universe:
         try:
             rows, asof = fetch_ticker(ticker)
         except Exception as err:
             print(f"{ticker}: fetch failed ({err}) - keeping previous snapshot")
             kept.append(ticker)
-            time.sleep(2)
+            time.sleep(1.5)
             continue
 
         if rows:
@@ -152,12 +234,12 @@ def main():
             print(f"{ticker}: {len(rows)} holdings, sum {sum(w for _, w in rows):.4f}, as of {asof}")
         else:
             kept.append(ticker)
-            print(f"{ticker}: parse failed sanity checks - keeping previous snapshot")
+            print(f"{ticker}: no usable table - keeping previous snapshot")
 
-        time.sleep(2)
+        time.sleep(1.5)
 
-    print(f"\nUpdated: {', '.join(updated) if updated else 'none'}")
-    print(f"Kept previous: {', '.join(kept) if kept else 'none'}")
+    print(f"\nUpdated {len(updated)}: {', '.join(updated) if updated else 'none'}")
+    print(f"Kept previous / no data {len(kept)}: {', '.join(kept) if kept else 'none'}")
 
     if not updated:
         print("No successful fetches - leaving holdings_static.json untouched.")

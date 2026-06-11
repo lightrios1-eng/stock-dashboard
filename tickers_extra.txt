@@ -1,0 +1,5 @@
+# Extra ETF tickers for the weekly holdings refresh.
+# One ticker per line. Lines starting with # are ignored.
+# Edit this file on GitHub (pencil icon) to add any ETF the app should
+# carry full holdings for - the next Monday run (or a manual run from the
+# Actions tab) picks it up automatically.
