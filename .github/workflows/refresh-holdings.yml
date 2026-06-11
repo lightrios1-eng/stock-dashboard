@@ -1,0 +1,32 @@
+name: Refresh ETF holdings
+
+on:
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install curl_cffi
+
+      - name: Refresh holdings snapshots
+        run: python refresh_holdings.py
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add holdings_static.json
+          git diff --cached --quiet && echo "No changes" || (git commit -m "Auto-refresh ETF holdings snapshots" && git push)
