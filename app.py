@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import re
 import time
@@ -903,9 +904,37 @@ def get_full_stats(ticker):
     return m
 
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def load_bundled_holdings():
+    """Full-basket snapshots committed to the repo (holdings_static.json). Captured
+    from Fidelity's public ETF research pages, which block cloud-server IPs - so the
+    snapshots are bundled with the app and refreshed by committing a new file."""
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "holdings_static.json")
+
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+
 @st.cache_data(ttl=43200, show_spinner=False)
 def _holdings_cached(ticker):
-    """Cached 12h on success; raises on failure so failures are retried, not cached."""
+    """Cached 12h on success; raises on failure so failures are retried, not cached.
+    Order: bundled full-basket snapshot -> live Fidelity research -> Yahoo top-10."""
+    bundled = load_bundled_holdings().get(ticker)
+
+    if bundled and bundled.get("rows"):
+        df = pd.DataFrame(bundled["rows"], columns=["Symbol", "Raw_Weight"])
+        df["Symbol"] = df["Symbol"].astype(str).str.strip().str.upper()
+        df["Raw_Weight"] = pd.to_numeric(df["Raw_Weight"], errors="coerce")
+        df = df.dropna(subset=["Raw_Weight"])
+        df = df[df["Raw_Weight"] > 0]
+
+        if len(df) >= 5 and 0.4 <= df["Raw_Weight"].sum() <= 1.6:
+            asof = bundled.get("asof", "n/a")
+            return df.reset_index(drop=True), f"full basket snapshot, as of {asof}"
+
     full_df, asof = fetch_fidelity_holdings(ticker)
 
     if not full_df.empty:
