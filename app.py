@@ -1594,7 +1594,7 @@ def main():
             st.markdown("---")
 
             # --- AI prompt with live numbers (changes every day) ---
-            st.markdown("### 🤖 1-Click AI Intelligence Prompt")
+            st.markdown("### 🤖 1-Click Claude Intelligence Prompt")
 
             pulse_bits = []
 
@@ -1613,7 +1613,13 @@ def main():
             )
 
             st.code(prompt_text, language="text")
-            st.caption("Prompt embeds today's live numbers - paste into Gemini, Claude, or ChatGPT for a current deep-dive.")
+
+            claude_url = "https://claude.ai/new?q=" + urllib.parse.quote(prompt_text)
+            st.markdown(f"[🔗 Open in Claude (prompt pre-filled)]({claude_url})")
+            st.caption(
+                "Prompt embeds today's live numbers, so it changes every day. "
+                "The link opens Claude with the prompt ready to send - or copy the box above."
+            )
 
         st.markdown("---")
         st.caption(
