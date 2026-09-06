@@ -16,12 +16,17 @@ import pandas as pd
 import plotly.express as px
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Master Portfolio", layout="wide")
+st.set_page_config(page_title="Master Portfolio", page_icon="📊", layout="wide")
 st.title("📊 Master Portfolio: Light Rios Edition")
 
-DEFAULT_PORT = "QQQ, FTEC, SMH"
+APP_VERSION = "2.0 (Sep 5, 2026)"
+
+# Your actual portfolio. Every tab starts with these tickers at these percentages.
+DEFAULT_PORT = "SPMO, QQQ, VGT, SMH"
+DEFAULT_WEIGHTS = {"SPMO": 25, "QQQ": 25, "VGT": 25, "SMH": 25}
 DEFAULT_BENCH = "VOO, QQQ"
-DEFAULT_WATCH = "QQQ, FTEC, SMH"
+# Watchlist = funds you might consider, shown next to a "MY PORTFOLIO" comparison row.
+DEFAULT_WATCH = "QQQM, SCHG, VUG, XLK, SOXX, IYW"
 
 ALL_NUM_COLS = [
     "Yield (TTM)", "Yield (Fwd)", "1D", "1W", "1M", "YTD",
@@ -35,6 +40,9 @@ ALL_NUM_COLS = [
 
 PERF_PERIODS = ["1M", "YTD", "1Y Total", "3Y CAGR", "5Y CAGR", "10Y CAGR", "15Y CAGR", "20Y CAGR"]
 
+# Shown as percentages in tables. "Expense" is averaged into the portfolio row; "Max DD" is not.
+EXTRA_PCT_COLS = ["Expense", "Max DD"]
+
 TOTAL_YEARS = [1, 3, 5, 10, 15, 20, 25]
 DIV_YEARS = [3, 5, 10, 15, 20]
 
@@ -46,6 +54,7 @@ DIV_YEARS = [3, 5, 10, 15, 20]
 EXTEND_CHAIN = {
     "QQQ":  [("^XNDX", "tr_index"), ("^NDX", "pr_index")],
     "QQQM": [("QQQ", "fund"), ("^XNDX", "tr_index"), ("^NDX", "pr_index")],
+    "QNDX": [("QQQ", "fund"), ("^XNDX", "tr_index"), ("^NDX", "pr_index")],
     "FTEC": [("VGT", "fund"), ("XLK", "fund")],
     "VGT":  [("XLK", "fund")],
     "IYW":  [("XLK", "fund")],
@@ -65,6 +74,10 @@ EXTEND_CHAIN = {
 INDEX_NOTE = {
     "QQQ":  "Tracks the Nasdaq-100. Extended with ^XNDX (total return) and ^NDX (price-only, index since 1985).",
     "QQQM": "Tracks the Nasdaq-100. Extended with QQQ, then Nasdaq-100 index history.",
+    "QNDX": "Tracks the Nasdaq-100. Extended with QQQ, then Nasdaq-100 index history.",
+    "SPMO": "Tracks the S&P 500 Momentum Index (about 100 S&P 500 stocks with the strongest recent "
+            "price momentum, rebalanced twice a year). Fund launched Oct 9, 2015; there is no older fund "
+            "on the same index, so its history is NOT extended - 15Y/20Y figures are blank on purpose.",
     "FTEC": "Tracks MSCI USA IMI Info Tech 25/50. Extended with VGT (same index family, 2004) and XLK (1998).",
     "VGT":  "Tracks MSCI US IMI Info Tech 25/50. Extended with XLK (1998).",
     "SMH":  "Tracks MVIS US Listed Semiconductor 25. Extended with SOXX (2001) and ^SOX index (price-only).",
@@ -94,7 +107,8 @@ IND_MAP = {
     "PEP": "Beverages", "KO": "Beverages", "PANW": "Cybersecurity",
     "CRWD": "Cybersecurity", "NOW": "Software - IT Services", "PLTR": "Data Analytics",
     "INTU": "Financial Soft", "ISRG": "Medical Devices", "AMGN": "Biotech",
-    "QQQM": "Tech / Growth ETF", "QQQ": "Tech / Growth ETF", "XLK": "Technology ETF",
+    "QQQM": "Tech / Growth ETF", "QQQ": "Tech / Growth ETF", "QNDX": "Tech / Growth ETF",
+    "SPMO": "S&P 500 Momentum ETF", "MTUM": "Momentum ETF", "XLK": "Technology ETF",
     "IXN": "Global Technology ETF", "VGT": "Technology ETF", "FTEC": "Technology ETF",
     "SMH": "Semiconductor ETF", "SOXX": "Semiconductor ETF", "IYW": "Technology ETF",
     "SCHG": "Growth ETF", "VUG": "Growth ETF", "MGK": "Mega-Cap Growth ETF",
@@ -110,7 +124,14 @@ B_INCEPT = {
     "SPY": "1993-01-22", "VGT": "2004-01-26", "VYM": "2006-11-10",
     "SCHD": "2011-10-20", "VIG": "2006-04-21", "JEPQ": "2022-05-03",
     "SOXX": "2001-07-10", "IYW": "2000-05-15", "VUG": "2004-01-26",
-    "IVV": "2000-05-15", "VTI": "2001-05-24"
+    "IVV": "2000-05-15", "VTI": "2001-05-24", "SPMO": "2015-10-09"
+}
+
+# Verified annual expense ratios (as a fraction: 0.0013 = 0.13% per year).
+# Anything not listed here is looked up from Yahoo Finance at run time.
+EXPENSE_RATIO = {
+    "SPMO": 0.0013, "QQQ": 0.0020, "QQQM": 0.0015, "VGT": 0.0009, "SMH": 0.0035,
+    "VOO": 0.0003, "VTI": 0.0003,
 }
 
 
@@ -166,7 +187,7 @@ def tz_naive(series):
 def format_dataframe(df):
     df = df.copy()
 
-    for col in ALL_NUM_COLS:
+    for col in ALL_NUM_COLS + EXTRA_PCT_COLS:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").apply(
                 lambda x: f"{x:.2%}" if pd.notnull(x) else "-"
@@ -640,6 +661,57 @@ def get_info(symbol):
     return _with_retries(fetch, tries=2, base_delay=1.5) or {}
 
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_expense_ratio(ticker):
+    """Annual expense ratio as a fraction. Verified table first, then Yahoo's fund data.
+    Returns None when unknown (shown as '-')."""
+    ticker = ticker.strip().upper()
+
+    if ticker in EXPENSE_RATIO:
+        return EXPENSE_RATIO[ticker]
+
+    def as_fraction(value):
+        try:
+            if value is None or pd.isna(value):
+                return None
+
+            value = float(value)
+
+            # Yahoo sometimes reports 0.35 meaning 0.35%; no equity ETF charges 5%+.
+            if value > 0.05:
+                value = value / 100
+
+            return value if 0 <= value <= 0.05 else None
+        except Exception:
+            return None
+
+    try:
+        ops = yf.Ticker(ticker).funds_data.fund_operations
+
+        if ops is not None and "Annual Report Expense Ratio" in ops.index:
+            row = ops.loc["Annual Report Expense Ratio"]
+            value = row[ticker] if ticker in getattr(row, "index", []) else row.iloc[0]
+            parsed = as_fraction(value)
+
+            if parsed is not None:
+                return parsed
+    except Exception:
+        pass
+
+    try:
+        info = get_info(ticker)
+
+        for key in ("netExpenseRatio", "annualReportExpenseRatio", "expenseRatio"):
+            parsed = as_fraction(info.get(key))
+
+            if parsed is not None:
+                return parsed
+    except Exception:
+        pass
+
+    return None
+
+
 @st.cache_data(ttl=21600, show_spinner=False)
 def build_extended_close(ticker):
     """
@@ -832,6 +904,7 @@ def get_full_stats(ticker):
         "Hist From": str(ext_close.index[0].date()),
         "Yield (Fwd)": y_fwd,
         "Yield (TTM)": y_ttm,
+        "Expense": get_expense_ratio(ticker),
     }
 
     # Dividend streak / frequency from the fund's own payments.
@@ -874,6 +947,15 @@ def get_full_stats(ticker):
     else:
         m["Max Total"] = None
         m["Max CAGR"] = None
+
+    # Worst peak-to-trough drop on the index-extended history, and when the bottom was.
+    try:
+        drawdown = ext_close / ext_close.cummax() - 1
+        m["Max DD"] = float(drawdown.min())
+        m["DD Date"] = str(drawdown.idxmin().date())[:7]
+    except Exception:
+        m["Max DD"] = None
+        m["DD Date"] = "-"
 
     # Dividend growth, extended through same-index proxy funds where needed.
     factors, div_proxies = build_div_growth_factors(ticker)
@@ -1049,10 +1131,12 @@ def calculate_blended_performance(weights):
     }
 
     results = {}
+    excluded = {}
 
     for label, (source_col, years) in period_sources.items():
         weighted_total = 0.0
         valid_weight = 0.0
+        missing = []
 
         for ticker, stats in stats_by_ticker.items():
             value = stats.get(source_col)
@@ -1061,6 +1145,10 @@ def calculate_blended_performance(weights):
             if value is not None and pd.notnull(value):
                 weighted_total += value * weight
                 valid_weight += weight
+            elif weight > 0:
+                missing.append(ticker)
+
+        excluded[label] = missing
 
         if valid_weight <= 0:
             results[label] = None
@@ -1073,7 +1161,102 @@ def calculate_blended_performance(weights):
         else:
             results[label] = total_return
 
-    return results
+    return results, excluded
+
+
+def current_weights(tickers):
+    """Weights for a ticker list as fractions summing to 1: the X-Ray percentage boxes if
+    set this session, otherwise DEFAULT_WEIGHTS, otherwise equal weight."""
+    tickers = [t for t in tickers if t]
+
+    if not tickers:
+        return {}
+
+    equal = 100 / len(tickers)
+    raw = {}
+
+    for ticker in tickers:
+        value = st.session_state.get(f"weight_{ticker}")
+
+        if value is None:
+            value = DEFAULT_WEIGHTS.get(ticker, equal)
+
+        try:
+            raw[ticker] = max(float(value), 0.0)
+        except Exception:
+            raw[ticker] = equal
+
+    total = sum(raw.values())
+
+    if total <= 0:
+        return {t: 1 / len(tickers) for t in tickers}
+
+    return {t: v / total for t, v in raw.items()}
+
+
+def weighted_portfolio_row(stats_list, weights, label="MY PORTFOLIO"):
+    """One table row for the blended portfolio. Yields, expense and N-year totals are
+    weighted averages; each N-year CAGR is re-derived from the weighted total so the row
+    matches the X-Ray blended numbers. Max DD is left blank (a blend's worst drop is not
+    an average of the funds' worst drops)."""
+    row = {
+        "Ticker": label, "Price": None, "Industry": "-", "Inception": "-", "Hist From": "-",
+        "Streak": None, "Freq": "-", "Max DD": None, "DD Date": "-", "Hist Notes": "-",
+    }
+    by_ticker = {s["Ticker"]: s for s in stats_list if s}
+
+    def wavg(col):
+        num = 0.0
+        den = 0.0
+
+        for ticker, stats in by_ticker.items():
+            value = stats.get(col)
+            weight = weights.get(ticker, 0)
+
+            if value is not None and pd.notnull(value) and weight > 0:
+                num += float(value) * weight
+                den += weight
+
+        return num / den if den > 0 else None
+
+    for col in ALL_NUM_COLS + ["Expense"]:
+        row[col] = wavg(col)
+
+    for years in TOTAL_YEARS:
+        if years > 1:
+            total = row.get(f"{years}Y Total")
+            row[f"{years}Y CAGR"] = (
+                ((1 + total) ** (1 / years)) - 1
+                if total is not None and total > -1
+                else None
+            )
+
+    return row
+
+
+def holdings_overlap(etfs):
+    """(unique stocks, stocks held by 2+ funds, stocks held by every fund) across the ETFs."""
+    sets = []
+
+    for ticker in etfs:
+        df, _ = get_holdings(ticker)
+
+        if not df.empty:
+            sets.append(set(df["Symbol"].astype(str).str.upper().replace({"GOOGL": "GOOG"})))
+
+    if not sets:
+        return 0, 0, 0
+
+    counts = {}
+
+    for symbols in sets:
+        for symbol in symbols:
+            counts[symbol] = counts.get(symbol, 0) + 1
+
+    n_two = sum(1 for c in counts.values() if c >= 2)
+    n_all = sum(1 for c in counts.values() if c == len(sets))
+
+    return len(counts), n_two, n_all
 
 
 # --- LIVE NEWS ENGINE ---
@@ -1087,14 +1270,18 @@ def _parse_news_time(value):
 
         text = str(value).strip()
 
-        if text.endswith("Z"):
-            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        # ISO style: 2026-09-04T12:00:00Z / 2026-09-04T12:00:00+00:00
+        if re.match(r"^\d{4}-\d{2}-\d{2}T", text):
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
 
-        if "T" in text:
             dt = datetime.fromisoformat(text)
             return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
-        return parsedate_to_datetime(text)
+        # RSS style: Tue, 01 Sep 2026 22:40:00 GMT  (note: "Tue" contains a T - do not
+        # route these through fromisoformat, that bug dropped Tue/Thu/Sat timestamps in v1)
+        dt = parsedate_to_datetime(text)
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     except Exception:
         return None
 
@@ -1323,7 +1510,7 @@ def build_growth_frame(tickers, years):
             series_map[ticker] = ext_close
 
     if not series_map:
-        return pd.DataFrame(), None
+        return pd.DataFrame(), None, []
 
     if years is not None:
         cutoff = pd.Timestamp.now() - pd.DateOffset(years=years)
@@ -1332,8 +1519,15 @@ def build_growth_frame(tickers, years):
 
     frames = []
     start_used = None
+    skipped = []
 
     for ticker, close in series_map.items():
+        # A fund whose (extended) history starts after the window would begin its line
+        # at $10,000 on a later date, which makes the chart lie. Skip it and say so.
+        if close.index[0] > cutoff + pd.Timedelta(days=45):
+            skipped.append(f"{ticker} (history starts {close.index[0].year})")
+            continue
+
         window = close[close.index >= cutoff]
 
         if len(window) < 10:
@@ -1354,33 +1548,233 @@ def build_growth_frame(tickers, years):
         }))
 
     if not frames:
-        return pd.DataFrame(), None
+        return pd.DataFrame(), None, skipped
 
-    return pd.concat(frames, ignore_index=True), start_used
+    return pd.concat(frames, ignore_index=True), start_used, skipped
 
 
 STATS_TABLE_COLS = (
-    ["Ticker", "Price", "Industry", "Inception", "Hist From", "Streak", "Freq"]
+    ["Ticker", "Price", "Industry", "Inception", "Hist From", "Streak", "Freq",
+     "Expense", "Max DD", "DD Date"]
     + ALL_NUM_COLS + ["Hist Notes"]
 )
 
 
+# --- SHOWS & VOICES (podcast RSS feeds + YouTube channels) ---
+# To add a show: tell Claude the show name or paste its YouTube link and you get one line to paste here.
+#   kind "rss"     = a podcast or news feed address
+#   kind "youtube" = a YouTube channel handle (the @name from the channel's page)
+SHOW_FEEDS = [
+    ("CNBC Top News", "rss", "https://www.cnbc.com/id/100003114/device/rss/rss.html"),
+    ("CNBC Television (YouTube)", "youtube", "@CNBCtelevision"),
+    ("The Compound and Friends (podcast)", "rss", "https://feeds.megaphone.fm/TCP4771071679"),
+    ("The Compound (YouTube)", "youtube", "@TheCompoundNews"),
+    ("The Real Eisman Playbook (podcast)", "rss", "https://feed.podbean.com/realeismanplaybook/feed.xml"),
+    ("The Real Eisman Playbook (YouTube)", "youtube", "@RealEismanPlaybook"),
+    ("FINAiUS (YouTube)", "youtube", "@FINAiUS"),
+]
+
+# If a direct feed is blocked from the cloud server, use Google News for that outlet instead.
+SHOW_FALLBACK_QUERY = {
+    "CNBC Top News": "site:cnbc.com",
+}
+
+ATOM_NS = "{http://www.w3.org/2005/Atom}"
+YT_NS = "{http://www.youtube.com/xml/schemas/2015}"
+
+
+def _http_get_bytes(url, timeout=15):
+    """Raw bytes with browser impersonation first (curl_cffi ships with yfinance), urllib second."""
+    try:
+        from curl_cffi import requests as curl_requests
+
+        response = curl_requests.get(url, impersonate="chrome", timeout=timeout)
+
+        if getattr(response, "status_code", 0) == 200 and response.content:
+            return response.content
+    except Exception:
+        pass
+
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    )
+
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return response.read()
+
+
+def _as_utc(when):
+    if when is None:
+        return None
+
+    try:
+        return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def resolve_youtube_channel_id(handle):
+    """'@SomeChannel' -> 'UC...' channel id by reading the channel page once a day.
+    Raises on failure so a miss is retried next time instead of being cached."""
+    handle = str(handle).strip()
+
+    if handle.startswith("UC") and len(handle) == 24:
+        return handle
+
+    if not handle.startswith("@"):
+        handle = "@" + handle
+
+    html = _http_get_bytes(f"https://www.youtube.com/{handle}").decode("utf-8", errors="replace")
+
+    for pattern in (
+        r'"externalId":"(UC[0-9A-Za-z_-]{22})"',
+        r'youtube\.com/channel/(UC[0-9A-Za-z_-]{22})',
+        r'"channelId":"(UC[0-9A-Za-z_-]{22})"',
+    ):
+        match = re.search(pattern, html)
+
+        if match:
+            return match.group(1)
+
+    raise _DataUnavailable(handle)
+
+
+def _parse_feed_items(xml_bytes, show):
+    """Read RSS 2.0 (podcasts, news) or Atom (YouTube) into simple rows."""
+    root = ET.fromstring(xml_bytes)
+    items = []
+
+    # RSS 2.0: <rss><channel><item>...
+    channel_link = root.findtext("channel/link")
+
+    for item in root.iter("item"):
+        title = item.findtext("title")
+
+        if not title:
+            continue
+
+        link = item.findtext("link")
+
+        if not link:
+            enclosure = item.find("enclosure")
+            link = enclosure.get("url") if enclosure is not None else channel_link
+
+        items.append({
+            "Show": show,
+            "Title": " ".join(title.split()),
+            "Link": link,
+            "Time": _as_utc(_parse_news_time(item.findtext("pubDate"))),
+            "VideoId": None,
+        })
+
+    # Atom: <feed><entry>... (YouTube channel feeds)
+    for entry in root.iter(ATOM_NS + "entry"):
+        title = entry.findtext(ATOM_NS + "title")
+
+        if not title:
+            continue
+
+        link_el = entry.find(ATOM_NS + "link")
+        link = link_el.get("href") if link_el is not None else None
+        video_id = entry.findtext(YT_NS + "videoId")
+
+        if not link and video_id:
+            link = f"https://www.youtube.com/watch?v={video_id}"
+
+        items.append({
+            "Show": show,
+            "Title": " ".join(title.split()),
+            "Link": link,
+            "Time": _as_utc(_parse_news_time(entry.findtext(ATOM_NS + "published"))),
+            "VideoId": video_id,
+        })
+
+    return items
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_show_items(feeds_key, per_show=8):
+    """Latest episodes/videos per show. Cached 30 min. Returns (DataFrame, status_by_show, fetched_at)."""
+    rows = []
+    status = {}
+
+    for show, kind, target in feeds_key:
+        try:
+            if kind == "youtube":
+                channel_id = resolve_youtube_channel_id(target)
+                url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+            else:
+                url = target
+
+            items = _parse_feed_items(_http_get_bytes(url), show)
+
+            if not items:
+                raise _DataUnavailable(show)
+
+            items.sort(key=lambda r: r["Time"] or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+            rows.extend(items[:per_show])
+            status[show] = f"{min(len(items), per_show)} new"
+            continue
+        except Exception:
+            pass
+
+        query = SHOW_FALLBACK_QUERY.get(show)
+        fallback = _google_news_for(query, show) if query else []
+
+        if fallback:
+            for entry in fallback[:per_show]:
+                rows.append({
+                    "Show": show,
+                    "Title": entry["Title"],
+                    "Link": entry["Link"],
+                    "Time": _as_utc(entry["Time"]),
+                    "VideoId": None,
+                })
+
+            status[show] = f"{min(len(fallback), per_show)} via Google News"
+        else:
+            status[show] = "unavailable right now"
+
+    columns = ["Show", "Title", "Link", "Time", "VideoId"]
+
+    if not rows:
+        return pd.DataFrame(columns=columns), status, datetime.now(timezone.utc)
+
+    df = pd.DataFrame(rows, columns=columns)
+    df = df.drop_duplicates(subset=["Title"])
+    df["Time"] = pd.to_datetime(df["Time"], utc=True, errors="coerce")
+    df = df.sort_values("Time", ascending=False, na_position="last").reset_index(drop=True)
+
+    return df, status, datetime.now(timezone.utc)
+
+
+def show_chart(fig):
+    """Full-width chart on both new and old Streamlit versions."""
+    try:
+        st.plotly_chart(fig, width="stretch")
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True)
+
+
 # --- UI ---
 def main():
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "🚀 X-Ray",
         "🆚 Benchmark",
         "📈 Dividends",
         "🔍 Deep Dive",
         "👀 Watchlist",
-        "📰 Insights & Updates"
+        "📰 Insights & Updates",
+        "🎧 Shows & Voices",
     ])
 
     # --- TAB 1: X-RAY ---
     with tab1:
         st.header("Portfolio X-Ray")
 
-        etfs = parse_tickers(st.text_input("ETFs to Blend:", DEFAULT_PORT))
+        etfs = parse_tickers(st.text_input("ETFs to Blend:", DEFAULT_PORT, key="xray_tickers"))
 
         if not etfs:
             st.info("Enter at least one ETF ticker.")
@@ -1391,11 +1785,12 @@ def main():
 
             for i, ticker in enumerate(etfs):
                 with cols[i]:
-                    raw_weights[ticker] = st.slider(
+                    raw_weights[ticker] = st.number_input(
                         f"{ticker} %",
                         min_value=0,
                         max_value=100,
-                        value=default_weight,
+                        value=int(DEFAULT_WEIGHTS.get(ticker, default_weight)),
+                        step=5,
                         key=f"weight_{ticker}"
                     ) / 100.0
 
@@ -1403,23 +1798,66 @@ def main():
 
             if total_w > 0:
                 weights = {ticker: weight / total_w for ticker, weight in raw_weights.items()}
-                st.caption(f"Sliders sum to {total_w * 100:.0f}% - normalized to 100% for the math below.")
+
+                if abs(total_w - 1.0) > 0.005:
+                    st.caption(f"Percentages sum to {total_w * 100:.0f}% - normalized to 100% for the math below.")
             else:
                 weights = raw_weights
                 st.warning("Set at least one ETF weight above 0.")
 
-            if st.button("Analyze Blended Holdings", key="analyze_blended") and total_w > 0:
+            portfolio_value = st.number_input(
+                "Portfolio value in $ (optional - adds a dollars-per-stock column):",
+                min_value=0,
+                value=0,
+                step=1000,
+                key="xray_value"
+            )
+
+            if st.button("Analyze Blended Holdings", key="analyze_blended"):
+                st.session_state["xray_go"] = True
+
+            if st.session_state.get("xray_go") and total_w > 0:
                 st.subheader("📈 Blended Performance")
                 st.caption(
                     "Long-period figures use index-extended history (older same-index funds / "
                     "indexes spliced in before each ETF's inception)."
                 )
 
-                blended_stats = calculate_blended_performance(weights)
+                blended_stats, excluded = calculate_blended_performance(weights)
                 metric_cols = st.columns(len(PERF_PERIODS))
 
                 for i, period in enumerate(PERF_PERIODS):
                     metric_cols[i].metric(period, pct_or_na(blended_stats.get(period)))
+
+                notes = []
+
+                for period, missing in excluded.items():
+                    if missing:
+                        notes.append(f"{period} excludes {', '.join(missing)}")
+
+                if notes:
+                    st.caption(
+                        "Where a fund is younger than the window it is left out and the figure is "
+                        "re-weighted across the rest: " + "; ".join(notes) + "."
+                    )
+
+                expense_bits = []
+                blended_expense = 0.0
+                expense_weight = 0.0
+
+                for ticker, weight in weights.items():
+                    ratio = get_expense_ratio(ticker)
+
+                    if ratio is not None:
+                        blended_expense += ratio * weight
+                        expense_weight += weight
+                        expense_bits.append(f"{ticker} {ratio:.2%}")
+
+                if expense_weight > 0:
+                    st.caption(
+                        f"Blended expense ratio: **{blended_expense / expense_weight:.2%}** per year "
+                        f"({' | '.join(expense_bits)})."
+                    )
 
                 st.markdown("---")
 
@@ -1432,13 +1870,25 @@ def main():
                         "Wait ~1 minute and press the button again - results are cached once loaded."
                     )
                 else:
+                    n_unique, n_two, n_all = holdings_overlap(etfs)
+                    top10_weight = full.head(10)["Weight"].sum()
+
                     st.caption(
-                        f"Showing all {len(full)} blended underlying positions, weighted by your slider mix."
+                        f"Showing all {len(full)} blended underlying positions, weighted by your percentages. "
+                        f"Top 10 stocks = {top10_weight:.1%} of the portfolio. "
+                        f"{n_two} stocks sit in two or more of your funds and {n_all} sit in all {len(etfs)}."
                     )
                     st.caption(
                         "Sources - "
                         + " | ".join(f"{ticker}: {info}" for ticker, info in source_counts.items())
                     )
+
+                    table = full[["Symbol", "Industry", "Weight %"]].copy()
+
+                    if portfolio_value and portfolio_value > 0:
+                        table["$ Exposure"] = (full["Weight"] * float(portfolio_value)).apply(
+                            lambda x: f"${x:,.0f}"
+                        )
 
                     c1, c2 = st.columns([2, 1])
 
@@ -1454,14 +1904,10 @@ def main():
                             textinfo="label+value",
                             texttemplate="%{label}<br>%{customdata[0]}<br>%{value:.2f}%"
                         )
-                        st.plotly_chart(fig, use_container_width=True)
+                        show_chart(fig)
 
                     with c2:
-                        st.dataframe(
-                            full[["Symbol", "Industry", "Weight %"]],
-                            height=500,
-                            hide_index=True
-                        )
+                        st.dataframe(table, height=500, hide_index=True)
 
     # --- TAB 2: BENCHMARK ---
     with tab2:
@@ -1484,6 +1930,9 @@ def main():
         log_scale = st.checkbox("Log scale (recommended for 15Y+)", value=True, key="bench_log")
 
         if st.button("Compare", key="compare"):
+            st.session_state["bench_go"] = True
+
+        if st.session_state.get("bench_go"):
             if not p_list or not m_list:
                 st.info("Enter at least one portfolio ticker and one benchmark ticker.")
             else:
@@ -1491,21 +1940,12 @@ def main():
                 m_stats = get_stats_for_tickers(m_list)
 
                 if p_stats and m_stats:
-                    df_p = pd.DataFrame(p_stats)
+                    bench_weights = current_weights(p_list)
+                    portfolio_row = weighted_portfolio_row(p_stats, bench_weights, label="MY PORTFOLIO")
 
-                    avg_p = {
-                        col: pd.to_numeric(df_p[col], errors="coerce").mean()
-                        for col in ALL_NUM_COLS
-                        if col in df_p.columns
-                    }
-                    avg_p["Ticker"] = "PORTFOLIO AVG"
-                    avg_p["Inception"] = "-"
-                    avg_p["Hist From"] = "-"
-                    avg_p["Hist Notes"] = "-"
-
-                    final = pd.DataFrame([avg_p] + m_stats)
+                    final = pd.DataFrame([portfolio_row] + m_stats)
                     final_cols = (
-                        ["Ticker", "Inception", "Hist From"]
+                        ["Ticker", "Inception", "Hist From", "Expense", "Max DD", "DD Date"]
                         + [col for col in ALL_NUM_COLS if col in final.columns]
                         + (["Hist Notes"] if "Hist Notes" in final.columns else [])
                     )
@@ -1513,11 +1953,17 @@ def main():
                     final = final.dropna(axis=1, how="all")
 
                     st.dataframe(format_dataframe(final), hide_index=True)
+                    st.caption(
+                        "MY PORTFOLIO is weighted by your X-Ray percentages ("
+                        + ", ".join(f"{t} {w:.0%}" for t, w in bench_weights.items())
+                        + "). Each N-year CAGR is computed from the blended N-year total return, "
+                        "so it matches the X-Ray tab."
+                    )
 
                     st.subheader("💰 Growth of $10,000")
 
                     years_map = {"10Y": 10, "15Y": 15, "20Y": 20, "25Y": 25, "Max common history": None}
-                    growth_df, start_used = build_growth_frame(
+                    growth_df, start_used, skipped = build_growth_frame(
                         list(dict.fromkeys(p_list + m_list)),
                         years_map[chart_choice]
                     )
@@ -1536,7 +1982,7 @@ def main():
                         if log_scale:
                             fig.update_yaxes(type="log")
 
-                        st.plotly_chart(fig, use_container_width=True)
+                        show_chart(fig)
 
                         if start_used is not None:
                             st.caption(
@@ -1544,45 +1990,40 @@ def main():
                                 "same-index fund / index data; price-only index eras exclude dividends."
                             )
 
+                    if skipped:
+                        st.caption(
+                            "Left off this chart because their history starts after the window: "
+                            + ", ".join(skipped) + ". Pick a shorter window to include them."
+                        )
+
     # --- TAB 3: DIVIDENDS ---
     with tab3:
         st.header("Dividend & Growth Data")
 
-        t_list = parse_tickers(st.text_area("Tickers", DEFAULT_PORT))
+        t_list = parse_tickers(st.text_area("Tickers", DEFAULT_PORT, key="div_tickers"))
 
         if st.button("Load Dividends", key="load_dividends"):
+            st.session_state["div_go"] = True
+
+        if st.session_state.get("div_go"):
             if not t_list:
                 st.info("Enter at least one ticker.")
             else:
                 data = get_stats_for_tickers(t_list)
 
                 if data:
-                    df = pd.DataFrame(data)
+                    div_weights = current_weights(t_list)
+                    portfolio_row = weighted_portfolio_row(data, div_weights, label="MY PORTFOLIO")
 
-                    avg_data = {
-                        col: pd.to_numeric(df[col], errors="coerce").mean()
-                        for col in ALL_NUM_COLS
-                        if col in df.columns
-                    }
-                    avg_data.update({
-                        "Ticker": "AVERAGE",
-                        "Inception": "-",
-                        "Hist From": "-",
-                        "Industry": "-",
-                        "Price": None,
-                        "Streak": None,
-                        "Freq": "-",
-                        "Hist Notes": "-"
-                    })
-
-                    final = pd.concat([df, pd.DataFrame([avg_data])], ignore_index=True)
+                    final = pd.concat([pd.DataFrame(data), pd.DataFrame([portfolio_row])], ignore_index=True)
                     final = final[[col for col in STATS_TABLE_COLS if col in final.columns]]
 
                     st.dataframe(format_dataframe(final), height=500, hide_index=True)
                     st.caption(
                         "Div CAGR uses completed calendar years. Where an ETF is younger than the "
                         "window, growth is chained from older same-index funds (see Hist Notes). "
-                        "Max Div CAGR covers the longest unbroken yearly run available."
+                        "Max Div CAGR covers the longest unbroken yearly run available. "
+                        "MY PORTFOLIO is weighted by your X-Ray percentages."
                     )
 
     # --- TAB 4: DEEP DIVE ---
@@ -1592,15 +2033,19 @@ def main():
         deep_tickers = parse_tickers(st.text_input("Tickers:", DEFAULT_PORT, key="deep_dive_tickers"))
 
         if st.button("Inspect ETFs", key="inspect_etfs"):
+            st.session_state["deep_go"] = True
+
+        if st.session_state.get("deep_go"):
             if not deep_tickers:
                 st.info("Enter at least one ETF ticker.")
             else:
                 for ticker in deep_tickers:
                     stats = get_full_stats(ticker)
                     hist_from = stats.get("Hist From", "N/A") if stats else "N/A"
+                    inception = stats.get("Inception", "N/A") if stats else B_INCEPT.get(ticker, "N/A")
 
                     st.subheader(
-                        f"Analysis for {ticker} | Fund inception: {B_INCEPT.get(ticker, 'N/A')} "
+                        f"Analysis for {ticker} | Fund inception: {inception} "
                         f"| Usable history from: {hist_from}"
                     )
 
@@ -1616,6 +2061,16 @@ def main():
                         c2.metric("Max Total Return", pct_or_na(stats.get("Max Total")))
                         c3.metric("15Y CAGR", pct_or_na(stats.get("15Y CAGR")))
                         c4.metric("Max Div CAGR", pct_or_na(stats.get("Max Div CAGR")))
+
+                        d1, d2, d3, d4 = st.columns(4)
+                        d1.metric("Expense ratio / yr", pct_or_na(stats.get("Expense")))
+                        d2.metric(
+                            "Worst drop (peak to bottom)",
+                            pct_or_na(stats.get("Max DD")),
+                            help="Deepest decline on the index-extended history. The date is when the bottom was reached."
+                        )
+                        d3.metric("Bottom reached", stats.get("DD Date", "-"))
+                        d4.metric("10Y CAGR", pct_or_na(stats.get("10Y CAGR")))
 
                     df, holdings_source = get_holdings(ticker)
 
@@ -1638,20 +2093,38 @@ def main():
                             hide_index=True
                         )
 
-    # --- TAB 5: WATCHLIST ---
+    # --- TAB 5: WATCHLIST (candidates vs my portfolio) ---
     with tab5:
-        st.header("Watchlist & Consideration")
+        st.header("Watchlist: candidates vs. my portfolio")
+        st.caption(
+            "Funds you might consider, lined up against a MY PORTFOLIO row built from your actual blend. "
+            "A candidate earns a look only if it beats that row on the things that matter to you: "
+            "long-run CAGR, cost, and worst drop."
+        )
 
-        watch_tickers = parse_tickers(st.text_input("Tickers:", DEFAULT_WATCH, key="watch_tickers"))
+        watch_tickers = parse_tickers(st.text_input("Candidates:", DEFAULT_WATCH, key="watch_tickers"))
+        base_tickers = parse_tickers(
+            st.text_input("My portfolio (for the comparison row):", DEFAULT_PORT, key="watch_base")
+        )
 
         if st.button("Update Watchlist", key="update_watchlist"):
+            st.session_state["watch_go"] = True
+
+        if st.session_state.get("watch_go"):
             if not watch_tickers:
                 st.info("Enter at least one ticker.")
             else:
                 data = get_stats_for_tickers(watch_tickers)
+                base = get_stats_for_tickers(base_tickers) if base_tickers else []
+                rows = []
 
-                if data:
-                    df = pd.DataFrame(data)
+                if base:
+                    rows.append(weighted_portfolio_row(base, current_weights(base_tickers), label="MY PORTFOLIO"))
+
+                rows.extend(data)
+
+                if rows:
+                    df = pd.DataFrame(rows)
                     final_cols = [col for col in STATS_TABLE_COLS if col in df.columns]
 
                     st.dataframe(format_dataframe(df[final_cols]), height=500, hide_index=True)
@@ -1665,12 +2138,18 @@ def main():
         )
         tickers_key = tuple(insight_tickers)
 
-        top_l, top_r = st.columns([1, 3])
+        top_l, top_m, top_r = st.columns([1, 1, 2])
 
         with top_l:
             if st.button("🔄 Refresh now", key="refresh_insights"):
                 get_live_news.clear()
                 get_pulse.clear()
+                st.rerun()
+
+        with top_m:
+            if st.button("🧹 Clear all cached data", key="clear_all_cache",
+                         help="Use this if a number looks stuck or wrong. Everything reloads fresh (about a minute)."):
+                st.cache_data.clear()
                 st.rerun()
 
         if not insight_tickers:
@@ -1754,25 +2233,25 @@ def main():
             # --- Computed portfolio read ---
             st.markdown("### 🧠 Portfolio Read (computed live)")
 
-            equal_weights = {t: 1 / len(insight_tickers) for t in insight_tickers}
-            core_holdings, _counts = build_blended_holdings(insight_tickers, equal_weights)
+            read_weights = current_weights(insight_tickers)
+            core_holdings, _counts = build_blended_holdings(insight_tickers, read_weights)
 
             if not core_holdings.empty:
-                nvda_weight = core_holdings.loc[core_holdings["Symbol"] == "NVDA", "Weight"].sum()
-                msft_aapl_weight = core_holdings.loc[
-                    core_holdings["Symbol"].isin(["MSFT", "AAPL"]),
-                    "Weight"
-                ].sum()
+                top1 = core_holdings.iloc[0]
                 top3 = core_holdings.head(3)
                 top3_weight = top3["Weight"].sum()
                 top3_names = ", ".join(top3["Symbol"].tolist())
+                top10_weight = core_holdings.head(10)["Weight"].sum()
+                n_unique, n_two, n_all = holdings_overlap(insight_tickers)
+                mix = ", ".join(f"{t} {w:.0%}" for t, w in read_weights.items())
 
                 st.markdown(
-                    f"Blending {', '.join(insight_tickers)} equally, the top 3 underlying names "
-                    f"({top3_names}) are an estimated **{top3_weight:.1%}** of the portfolio. "
-                    f"NVDA alone is ~**{nvda_weight:.1%}**; MSFT + AAPL are ~**{msft_aapl_weight:.1%}**. "
-                    "Overlap across these ETFs means the portfolio behaves more like a concentrated "
-                    "tech basket than the fund count suggests."
+                    f"Blending {mix} gives you {n_unique} underlying stocks. The top 3 ({top3_names}) are an "
+                    f"estimated **{top3_weight:.1%}** of the portfolio and the top 10 are **{top10_weight:.1%}**. "
+                    f"**{top1['Symbol']}** alone is ~**{top1['Weight']:.1%}**. "
+                    f"{n_two} stocks appear in two or more of your funds and {n_all} appear in all "
+                    f"{len(insight_tickers)}, which is why these funds move together more than the fund "
+                    "count suggests."
                 )
                 st.caption(
                     "Computed from each fund's published holdings (full basket where available): "
@@ -1798,13 +2277,14 @@ def main():
                     if pd.notnull(row.get("YTD")) and pd.notnull(row.get("1M")):
                         pulse_bits.append(f"{row['Ticker']} (YTD {row['YTD']:+.1%}, 1M {row['1M']:+.1%})")
 
+            mix_text = ", ".join(f"{t} {w:.0%}" for t, w in read_weights.items())
             today_str = datetime.now().strftime("%B %d, %Y")
             prompt_text = (
                 f"Today is {today_str}. Give me a comprehensive news and analysis update on my "
                 f"portfolio: {', '.join(pulse_bits) if pulse_bits else ', '.join(insight_tickers)}, "
-                "blended equally. Cover: (1) this week's key news per holding, (2) semiconductor and "
-                "tech sector dynamics, (3) macro factors (rates, AI capex) affecting these funds, and "
-                "(4) anything a long-term buy-and-hold investor should monitor. Cite recent sources."
+                f"weighted {mix_text}. Cover: (1) this week's key news per holding, (2) semiconductor, "
+                "tech and momentum-factor dynamics, (3) macro factors (rates, AI capex) affecting these "
+                "funds, and (4) anything a long-term buy-and-hold investor should monitor. Cite recent sources."
             )
 
             st.code(prompt_text, language="text")
@@ -1816,11 +2296,65 @@ def main():
                 "The link opens Claude with the prompt ready to send - or copy the box above."
             )
 
-        st.markdown("---")
+    # --- TAB 7: SHOWS & VOICES ---
+    with tab7:
+        st.header("🎧 Shows & Voices")
         st.caption(
-            "Data: Yahoo Finance via yfinance (free, ~15-min delayed quotes). Prices cached 15 min, "
-            "full history 6h, holdings 12h. Long-period returns use index-extended history - see Hist Notes."
+            "Newest episodes and videos from the shows you follow. Refreshes every 30 minutes. "
+            "To add a show, tell Claude the name or paste its YouTube link."
         )
+
+        if st.button("🔄 Refresh shows", key="refresh_shows"):
+            get_show_items.clear()
+            st.rerun()
+
+        shows_df, show_status, shows_time = get_show_items(tuple(SHOW_FEEDS))
+
+        st.caption(
+            f"Fetched {shows_time.astimezone().strftime('%Y-%m-%d %H:%M %Z')} - "
+            + " | ".join(f"{name}: {state}" for name, state in show_status.items())
+        )
+
+        if shows_df.empty:
+            st.info("No episodes came back right now - press Refresh shows to retry.")
+        else:
+            show_names = [name for name, _, _ in SHOW_FEEDS]
+            show_pick = st.multiselect(
+                "Filter by show:",
+                options=show_names,
+                default=show_names,
+                key="show_filter"
+            )
+            shown_shows = shows_df[shows_df["Show"].isin(show_pick)].head(40)
+
+            for _, item in shown_shows.iterrows():
+                age = relative_age(item["Time"])
+                meta = " · ".join(x for x in [str(item["Show"]), age] if x)
+
+                if item["Link"]:
+                    st.markdown(f"**[{item['Title']}]({item['Link']})**  \n{meta}")
+                else:
+                    st.markdown(f"**{item['Title']}**  \n{meta}")
+
+            videos = shows_df[shows_df["VideoId"].notna()]
+
+            if not videos.empty:
+                st.markdown("---")
+                st.markdown("### ▶️ Watch here")
+
+                channels = videos.drop_duplicates(subset=["Show"])["Show"].tolist()
+                watch_pick = st.selectbox("Latest video from:", channels, key="watch_pick")
+                latest = videos[videos["Show"] == watch_pick].iloc[0]
+
+                st.markdown(f"**{latest['Title']}**")
+                st.video(f"https://www.youtube.com/watch?v={latest['VideoId']}")
+
+    st.markdown("---")
+    st.caption(
+        f"Master Portfolio v{APP_VERSION}. Data: Yahoo Finance via yfinance (free, ~15-min delayed quotes). "
+        "Prices cached 15 min, full history 6h, holdings 12h, shows 30 min. Long-period returns use "
+        "index-extended history - see Hist Notes."
+    )
 
 
 if not os.environ.get("APP_TESTING"):
