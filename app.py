@@ -1,5 +1,6 @@
 import io
 import json
+import math
 import os
 import re
 import time
@@ -19,7 +20,7 @@ import plotly.express as px
 st.set_page_config(page_title="Master Portfolio", page_icon="📊", layout="wide")
 st.title("📊 Master Portfolio: Light Rios Edition")
 
-APP_VERSION = "2.2 (Sep 5, 2026)"
+APP_VERSION = "2.3 (Sep 5, 2026)"
 
 # Your actual portfolio. Every tab starts with these tickers at these percentages.
 DEFAULT_PORT = "SPMO, QNDX, FTEC, SMH"
@@ -192,9 +193,12 @@ def format_dataframe(df):
 
     for col in ALL_NUM_COLS + EXTRA_PCT_COLS:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").apply(
-                lambda x: f"{x:.2%}" if pd.notnull(x) else "-"
-            )
+            if col == "Expense":
+                df[col] = pd.to_numeric(df[col], errors="coerce").apply(fmt_expense)
+            else:
+                df[col] = pd.to_numeric(df[col], errors="coerce").apply(
+                    lambda x: f"{x:.2%}" if pd.notnull(x) else "-"
+                )
 
     if "Price" in df.columns:
         df["Price"] = pd.to_numeric(df["Price"], errors="coerce").apply(
@@ -1040,11 +1044,18 @@ def _holdings_cached(ticker):
 
         if len(df) >= 5 and 0.4 <= df["Raw_Weight"].sum() <= 1.6:
             asof = bundled.get("asof", "n/a")
+
+            if holdings_completeness(ticker, len(df)) == "partial":
+                return df.reset_index(drop=True), f"partial list: {len(df)} of ~{EXPECTED_HOLDINGS[ticker]} (snapshot as of {asof})"
+
             return df.reset_index(drop=True), f"full basket snapshot, as of {asof}"
 
     full_df, asof = fetch_fidelity_holdings(ticker)
 
     if not full_df.empty:
+        if holdings_completeness(ticker, len(full_df)) == "partial":
+            return full_df, f"partial list: {len(full_df)} of ~{EXPECTED_HOLDINGS[ticker]} (Fidelity page cut off)"
+
         label = "full basket" + (f", as of {asof}" if asof else "")
         return full_df, label
 
@@ -1085,7 +1096,7 @@ def get_holdings(ticker):
     if own_source.startswith("full basket"):
         return own_df, own_source
 
-    # Only a top-10 list (or nothing) for this fund. If an older fund tracks the same index
+    # Only a top-10 or cut-off list (or nothing) for this fund. If an older fund tracks the same index
     # and we have its full basket, that basket is a far better picture than 10 names.
     for symbol, kind in EXTEND_CHAIN.get(ticker, []):
         if kind != "fund":
@@ -1510,6 +1521,7 @@ def get_pulse(tickers_key):
             rows.append({
                 "Ticker": ticker,
                 "Price": last,
+                "As of": str(close.index[-1].date()),
                 "1D": return_by_sessions(close, 1),
                 "1W": return_by_sessions(close, 5),
                 "1M": return_by_sessions(close, 21),
@@ -1950,8 +1962,11 @@ def holdings_overlap_pct(df_a, df_b):
 
 
 def describe_fund(ticker, info):
+    if ticker in SHORT_DESC:
+        return SHORT_DESC[ticker]
+
     if ticker in INDEX_NOTE:
-        return INDEX_NOTE[ticker].split(". ")[0] + "."
+        return INDEX_NOTE[ticker].split(". ")[0][:90]
 
     return IND_MAP.get(ticker) or info.get("category") or info.get("longName") or "-"
 
@@ -1999,7 +2014,7 @@ def compare_sections(tickers):
         "What it holds": {t: describe_fund(t, get_info(t)) for t in cols},
         "Fund since": {t: stats[t]["Inception"] for t in cols},
         "History used from": {t: stats[t]["Hist From"] for t in cols},
-        "Cost per year": {t: pct(stats[t].get("Expense")) for t in cols},
+        "Cost per year": {t: fmt_expense(stats[t].get("Expense")) for t in cols},
         "Number of holdings": {t: (len(holdings[t][0]) if not holdings[t][0].empty else "-") for t in cols},
         "Top 3 holdings": {t: top3(t) for t in cols},
         "Top 10 share": {t: top10(t) for t in cols},
@@ -2020,9 +2035,38 @@ def compare_sections(tickers):
         "This year so far": {t: pct(stats[t].get("YTD")) for t in cols},
         "Last month": {t: pct(stats[t].get("1M")) for t in cols},
     }
+    details = {t: (dividend_detail(t) or {}) for t in cols}
+
+    def dv(t, key, money=False, pct_fmt=False):
+        value = details[t].get(key)
+
+        if value is None:
+            return "-"
+
+        if money:
+            return f"${value:.4f}"
+
+        if pct_fmt:
+            return f"{value:+.1%}"
+
+        return str(value)
+
+    def source_note(t):
+        src_t = details[t].get("source")
+        return f" ({src_t}'s record)" if src_t and src_t != t else ""
+
     income = {
         "Dividend yield (last 12 months)": {t: pct(stats[t].get("Yield (TTM)")) for t in cols},
         "Pays": {t: {"Qr": "Quarterly", "Mo": "Monthly", "Yr": "Yearly"}.get(stats[t].get("Freq"), "-") for t in cols},
+        "Usual payout months": {t: dv(t, "usual_months") + source_note(t) for t in cols},
+        "Last payout per share": {t: dv(t, "last_amount", money=True) for t in cols},
+        "Last ex-dividend date": {t: dv(t, "last_date") for t in cols},
+        "Same payout a year earlier": {t: dv(t, "prev_amount", money=True) for t in cols},
+        "Change vs. a year earlier": {t: dv(t, "yoy", pct_fmt=True) for t in cols},
+        "Last 12 months per share": {t: dv(t, "ttm", money=True) for t in cols},
+        "Prior 12 months per share": {t: dv(t, "prior_ttm", money=True) for t in cols},
+        "Change, 12-month total": {t: dv(t, "ttm_change", pct_fmt=True) for t in cols},
+        "Next/last pay date (Yahoo)": {t: dv(t, "pay_date_yahoo") for t in cols},
         "Years of rising payouts": {t: stats[t].get("Streak", "-") for t in cols},
         "Payout growth, 5 yrs (per year)": {t: pct(stats[t].get("5Y Div CAGR")) for t in cols},
         "Payout growth, 10 yrs (per year)": {t: pct(stats[t].get("10Y Div CAGR")) for t in cols},
@@ -2056,7 +2100,7 @@ def compare_sections(tickers):
 
     if len(exp) >= 2:
         cheapest = min(exp, key=exp.get)
-        verdicts.append(f"Cheapest: {cheapest} at {exp[cheapest]:.2%} a year.")
+        verdicts.append(f"Cheapest: {cheapest} at {fmt_expense(exp[cheapest])} a year.")
 
     for years in [20, 15, 10, 5, 3]:
         col = f"{years}Y CAGR"
@@ -2092,6 +2136,358 @@ def compare_sections(tickers):
         verdicts.append(f"Most overlap: {top_pair['Pair']} are {top_pair['Same stocks by weight']} the same stocks by weight.")
 
     return sections, overlaps, verdicts
+
+
+# --- EXPECTED HOLDINGS COUNTS (to catch a cut-off list, e.g. 36 rows for a 100-stock fund) ---
+EXPECTED_HOLDINGS = {
+    "SPMO": 100, "QQQ": 101, "QQQM": 101, "QNDX": 101, "VGT": 320, "FTEC": 300, "SMH": 26,
+    "VOO": 500, "SPY": 500, "IVV": 500, "SPLG": 500, "VTI": 3500, "SCHG": 200, "VUG": 150,
+    "XLK": 70, "SOXX": 30, "IYW": 140, "MGK": 70, "MTUM": 125,
+}
+
+
+def holdings_completeness(ticker, count):
+    """'ok', 'partial' or 'unknown' given how many rows we have versus what the fund really holds."""
+    expected = EXPECTED_HOLDINGS.get(ticker.strip().upper())
+
+    if not expected:
+        return "unknown"
+
+    return "ok" if count >= 0.6 * expected else "partial"
+
+
+def fmt_expense(value):
+    """0.0013 -> '0.13%', 0.00084 -> '0.084%'."""
+    if value is None or pd.isna(value):
+        return "-"
+
+    text = f"{float(value):.3%}"
+    return text[:-2] + "%" if text.endswith("0%") else text
+
+
+SHORT_DESC = {
+    "SPMO": "S&P 500 Momentum Index: the ~100 S&P 500 stocks with the strongest recent price momentum",
+    "QNDX": "Nasdaq-100 Index (same index as QQQ), State Street, 0.10%",
+    "QQQ": "Nasdaq-100 Index, Invesco",
+    "QQQM": "Nasdaq-100 Index, Invesco (cheaper QQQ)",
+    "FTEC": "MSCI USA IMI Information Technology 25/50: essentially all U.S. tech stocks",
+    "VGT": "MSCI US IMI Information Technology 25/50: essentially all U.S. tech stocks",
+    "SMH": "MVIS US Listed Semiconductor 25: the 25 biggest U.S.-listed chip companies",
+    "SOXX": "ICE Semiconductor Index: ~30 U.S.-listed chip companies",
+    "VOO": "S&P 500 Index",
+    "VTI": "Total U.S. stock market",
+    "SCHG": "Dow Jones U.S. Large-Cap Growth",
+    "VUG": "CRSP US Large Cap Growth",
+    "XLK": "S&P 500 technology sector",
+}
+
+
+# --- DIVIDEND DETAIL (per share, dates, growth) ---
+def dividend_detail(ticker):
+    """Per-share payout facts. A fund under a year old borrows its same-index twin's record and says so."""
+    ticker = ticker.strip().upper()
+    close, div = get_history_bundle(ticker)
+
+    if close.empty:
+        return None
+
+    source = ticker
+    own_days = (close.index[-1] - close.index[0]).days
+
+    if div.empty or own_days < 365:
+        for symbol, kind in EXTEND_CHAIN.get(ticker, []):
+            if kind != "fund":
+                continue
+
+            _, proxy_div = get_history_bundle(symbol)
+
+            if not proxy_div.empty:
+                div = proxy_div
+                source = symbol
+                break
+
+    info = get_info(ticker)
+    dates = {}
+
+    for key, label in (("exDividendDate", "ex_date_yahoo"), ("dividendDate", "pay_date_yahoo")):
+        try:
+            raw = info.get(key)
+
+            if raw:
+                dates[label] = str(datetime.fromtimestamp(float(raw), tz=timezone.utc).date())
+        except Exception:
+            pass
+
+    result = {"source": source, "rows": [], "usual_months": "-", "last_amount": None, "last_date": None,
+              "prev_amount": None, "yoy": None, "ttm": None, "prior_ttm": None, "ttm_change": None}
+    result.update(dates)
+
+    div = div[div > 0].sort_index()
+
+    if div.empty:
+        return result
+
+    now = pd.Timestamp.now()
+    last_date = div.index[-1]
+    last_amount = float(div.iloc[-1])
+
+    def year_earlier(date):
+        target = date - pd.DateOffset(years=1)
+        window = div[(div.index >= target - pd.Timedelta(days=45)) & (div.index <= target + pd.Timedelta(days=45))]
+        return float(window.iloc[-1]) if not window.empty else None
+
+    prev_amount = year_earlier(last_date)
+    ttm = float(div[div.index > now - pd.DateOffset(years=1)].sum())
+    prior = float(div[(div.index > now - pd.DateOffset(years=2)) & (div.index <= now - pd.DateOffset(years=1))].sum())
+
+    result.update({
+        "last_amount": last_amount,
+        "last_date": str(last_date.date()),
+        "prev_amount": prev_amount,
+        "yoy": (last_amount / prev_amount - 1) if prev_amount else None,
+        "ttm": ttm,
+        "prior_ttm": prior if prior > 0 else None,
+        "ttm_change": (ttm / prior - 1) if prior > 0 else None,
+    })
+
+    import calendar as _cal
+    months = sorted({d.month for d in div.index[-4:]})
+    result["usual_months"] = ", ".join(_cal.month_abbr[m] for m in months) if months else "-"
+
+    for date, amount in list(div.tail(8).items())[::-1]:
+        earlier = year_earlier(date)
+        result["rows"].append({
+            "Ex-date": str(date.date()),
+            "$ per share": f"${float(amount):.4f}",
+            "Same payout a year earlier": f"${earlier:.4f}" if earlier else "-",
+            "Change": f"{float(amount) / earlier - 1:+.1%}" if earlier else "-",
+        })
+
+    return result
+
+
+# --- MILITARY PAY, TAX AND VETERAN NUMBERS (2026, verified Sep 5, 2026) ---
+STATIC_FACTS_VERIFIED = "Sep 5, 2026"
+
+# Monthly basic pay, 2026 (DFAS table, 3.8% raise). Columns = years of service thresholds below.
+YOS_COLS = [0, 2, 3, 4, 6, 8, 10, 12, 14, 16, 18, 20]
+PAY_2026 = {
+    "O-1": [4150.32, 4320.18, 5222.55, 5222.55, 5222.55, 5222.55, 5222.55, 5222.55, 5222.55, 5222.55, 5222.55, 5222.55],
+    "O-2": [4781.94, 5446.11, 6272.66, 6484.50, 6617.60, 6617.60, 6617.60, 6617.60, 6617.60, 6617.60, 6617.60, 6617.60],
+    "O-3": [5534.30, 6273.64, 6770.54, 7382.64, 7737.02, 8125.24, 8375.81, 8788.43, 9004.18, 9004.18, 9004.18, 9004.18],
+    "O-4": [6294.79, 7286.32, 7773.47, 7880.85, 8332.20, 8816.41, 9419.73, 9888.32, 10214.39, 10401.83, 10509.86, 10509.86],
+    "O-5": [7295.43, 8218.31, 8787.13, 8894.19, 9249.54, 9461.38, 9928.35, 10271.99, 10714.87, 11391.41, 11713.89, 12032.80],
+    "O-6": [8751.33, 9614.00, 10244.98, 10244.98, 10284.35, 10724.96, 10783.54, 10783.54, 11396.29, 12479.59, 13115.45, 13750.98],
+}
+BAS_2026 = {"Officer": 328.48, "Enlisted": 476.95}
+TSP_LIMIT_2026 = 24500
+SS_WAGE_BASE_2026 = 184500
+STD_DEDUCTION_2026 = {"Single": 16100, "Married filing jointly": 32200}
+BRACKETS_2026 = {
+    "Single": [(12400, 0.10), (50400, 0.12), (105700, 0.22), (201775, 0.24), (256225, 0.32), (640600, 0.35), (float("inf"), 0.37)],
+    "Married filing jointly": [(24800, 0.10), (100800, 0.12), (211400, 0.22), (403550, 0.24), (512450, 0.32), (768700, 0.35), (float("inf"), 0.37)],
+}
+# VA disability compensation, monthly, effective Dec 1, 2025 (2.8% COLA): (veteran alone, veteran with spouse)
+VA_RATES_2026 = {
+    10: (180.42, 180.42), 20: (356.66, 356.66), 30: (552.47, 618.26), 40: (795.84, 883.22),
+    50: (1132.90, 1241.87), 60: (1435.02, 1566.60), 70: (1808.45, 1961.62), 80: (2102.15, 2276.91),
+    90: (2362.30, 2559.34), 100: (3938.58, 4158.17),
+}
+
+
+def basic_pay_2026(grade, years):
+    row = PAY_2026.get(grade)
+
+    if not row:
+        return 0.0
+
+    index = 0
+
+    for i, threshold in enumerate(YOS_COLS):
+        if years >= threshold:
+            index = i
+
+    return row[index]
+
+
+def federal_tax_2026(taxable_income, status):
+    """Tax from the 2026 brackets on income after the standard deduction; also returns the marginal rate."""
+    remaining = max(float(taxable_income), 0.0)
+    tax = 0.0
+    lower = 0.0
+    marginal = 0.10
+
+    for upper, rate in BRACKETS_2026[status]:
+        if remaining <= 0:
+            break
+
+        slice_amount = min(remaining, upper - lower)
+        tax += slice_amount * rate
+        marginal = rate
+        remaining -= slice_amount
+        lower = upper
+
+    return tax, marginal
+
+
+def military_pay_summary(base, bah, bas, other_taxable, roth_pct, trad_pct, status, state_pct):
+    """Monthly figures. Allowances (BAH, BAS) are tax-free. Agency TSP is 1% automatic plus a match
+    of 100% on the first 3% you put in and 50% on the next 2% (max 4%), always traditional."""
+    contrib_pct = roth_pct + trad_pct
+    match = min(contrib_pct, 3) * 1.0 + max(min(contrib_pct, 5) - 3, 0) * 0.5
+    agency = base * (1 + match) / 100
+    employee = base * contrib_pct / 100
+    trad = base * trad_pct / 100
+
+    annual_wages = (base + other_taxable) * 12
+    annual_taxable = max(annual_wages - trad * 12 - STD_DEDUCTION_2026[status], 0)
+    fed_year, marginal = federal_tax_2026(annual_taxable, status)
+    fed = fed_year / 12
+    ss = min(annual_wages, SS_WAGE_BASE_2026) * 0.062 / 12
+    medicare = annual_wages * 0.0145 / 12
+    state = max(annual_wages - trad * 12, 0) * state_pct / 100 / 12
+    allowances = bah + bas
+    gross_cash = base + other_taxable + allowances
+    take_home = gross_cash - fed - ss - medicare - state - employee
+    tax_advantage = allowances * marginal
+
+    return {
+        "base": base, "allowances": allowances, "other": other_taxable, "gross_cash": gross_cash,
+        "taxable_wages": base + other_taxable - trad, "fed": fed, "ss": ss, "medicare": medicare, "state": state,
+        "employee_tsp": employee, "agency_tsp": agency, "take_home": take_home, "marginal": marginal,
+        "tax_advantage": tax_advantage, "total_comp": gross_cash + agency + tax_advantage,
+        "annual_taxable": annual_taxable, "match_pct": match,
+    }
+
+
+def va_combined_rating(ratings):
+    """VA 'whole person' math: each rating applies to what is left, then round to the nearest 10."""
+    ratings = sorted([int(r) for r in ratings if 0 < int(r) <= 100], reverse=True)
+
+    if not ratings:
+        return 0, 0.0
+
+    remaining = 100.0
+
+    for rating in ratings:
+        remaining -= remaining * rating / 100
+
+    exact = 100 - remaining
+    rounded = int(math.floor(exact / 10.0 + 0.5)) * 10   # VA rounds 5s up (Python's round() would not)
+
+    return min(rounded, 100), exact
+
+
+def va_monthly_2026(rating, with_spouse):
+    rates = VA_RATES_2026.get(rating)
+
+    if not rates:
+        return 0.0
+
+    return rates[1] if with_spouse else rates[0]
+
+
+def tsp_projection(monthly_employee, monthly_agency, years, annual_growth):
+    """End balance after `years` with monthly contributions and a steady growth rate."""
+    r = annual_growth / 12
+    n = years * 12
+    total = monthly_employee + monthly_agency
+
+    if abs(r) < 1e-12:
+        balance = total * n
+    else:
+        balance = total * (((1 + r) ** n - 1) / r)
+
+    split = monthly_employee / total if total > 0 else 0
+
+    return balance, balance * split, balance * (1 - split)
+
+
+# --- DATA HEALTH (runs on every load; cheap checks on cached data) ---
+def data_health(tickers, deep=False):
+    checks = []
+    today = pd.Timestamp.now().normalize()
+
+    # 1. Prices
+    try:
+        pulse_df, _ = get_pulse(tuple(tickers))
+    except Exception:
+        pulse_df = pd.DataFrame()
+
+    if pulse_df.empty or "As of" not in pulse_df.columns:
+        checks.append(("Prices (Yahoo)", "Problem", "No price data came back. Press 'Refresh now' on Insights, then 'Clear all cached data' if it persists."))
+    else:
+        latest = pd.to_datetime(pulse_df["As of"]).max()
+        age = (today - latest.normalize()).days
+        status = "OK" if age <= 5 else "Check"
+        checks.append(("Prices (Yahoo)", status, f"Last close {latest.date()} ({age} days ago). Weekends and holidays are normal; more than 5 days is not."))
+
+    # 2. Holdings snapshot age and completeness
+    bundled = load_bundled_holdings()
+    asof_dates = []
+
+    for ticker in tickers:
+        entry = bundled.get(ticker) or {}
+
+        try:
+            asof_dates.append(pd.to_datetime(entry.get("asof")))
+        except Exception:
+            pass
+
+    if asof_dates:
+        oldest = min(d for d in asof_dates if pd.notnull(d))
+        age = (today - oldest.normalize()).days
+        checks.append(("Holdings snapshot age", "OK" if age <= 45 else "Check",
+                        f"Oldest fund list is as of {oldest.date()} ({age} days). Fidelity publishes monthly; the Monday job picks it up."))
+
+    for ticker in tickers:
+        df, source = get_holdings(ticker)
+        count = len(df)
+        completeness = holdings_completeness(ticker, count)
+        expected = EXPECTED_HOLDINGS.get(ticker)
+
+        if df.empty:
+            checks.append((f"{ticker} holdings", "Problem", "No holdings loaded. Press 'Clear all cached data'."))
+        elif "stand-in" in source:
+            checks.append((f"{ticker} holdings", "Check", f"{count} rows, {source}. Fine until the fund publishes its own list."))
+        elif completeness == "partial" or "top 10" in source or "partial" in source:
+            checks.append((f"{ticker} holdings", "Problem",
+                            f"Only {count} rows (fund holds about {expected or '?'}). Source: {source}. Run 'Refresh ETF holdings' on GitHub; if it stays short, tell Claude."))
+        else:
+            checks.append((f"{ticker} holdings", "OK", f"{count} rows, {source}."))
+
+    # 3. History extension and expense ratio (only once the stats are already computed)
+    if deep:
+        for ticker in tickers:
+            stats = get_full_stats(ticker)
+
+            if not stats:
+                checks.append((f"{ticker} history", "Problem", "No price history. Yahoo may be rate-limiting; press 'Clear all cached data'."))
+                continue
+
+            if ticker in EXTEND_CHAIN and "hist:" not in str(stats.get("Hist Notes", "")):
+                checks.append((f"{ticker} history", "Check", f"Long-period history did not extend past {stats['Hist From']}. Press 'Clear all cached data' to retry."))
+            else:
+                checks.append((f"{ticker} history", "OK", f"Usable history from {stats['Hist From']}."))
+
+            if stats.get("Expense") is None:
+                checks.append((f"{ticker} expense ratio", "Check", "Unknown. Ask Claude to add the verified figure."))
+
+    # 4. Shows feeds
+    try:
+        _, show_status, shows_time = get_show_items(tuple(SHOW_FEEDS))
+        bad = [name for name, state in show_status.items() if "unavailable" in state]
+        checks.append(("Shows & Voices feeds", "Check" if bad else "OK",
+                        ("Not loading: " + ", ".join(bad)) if bad else f"All {len(show_status)} feeds loaded at {shows_time.astimezone().strftime('%H:%M')}."))
+    except Exception:
+        checks.append(("Shows & Voices feeds", "Check", "Feed check did not run."))
+
+    # 5. Hand-entered facts and their verification date
+    checks.append(("Fixed facts (verified " + STATIC_FACTS_VERIFIED + ")", "OK",
+                    "Expense ratios, tax rules (2026), military pay tables (2026), BAS, TSP limit, VA rates (Dec 2025 COLA). "
+                    "Due for a re-check every January and whenever a fund changes; ask Claude."))
+
+    return checks
 
 
 # --- SHOWS & VOICES (podcast RSS feeds + YouTube channels) ---
@@ -2284,6 +2680,211 @@ def get_show_items(feeds_key, per_show=8):
     return df, status, datetime.now(timezone.utc)
 
 
+def render_health(tickers):
+    """Top-of-page panel: what is fresh, what is stale, what is hand-entered and when it was verified."""
+    deep = bool(st.session_state.get("xray_go") or st.session_state.get("bench_go") or st.session_state.get("cmp_go"))
+    checks = data_health(tickers, deep=deep)
+    flagged = [c for c in checks if c[1] != "OK"]
+    stamp = datetime.now().strftime("%H:%M")
+    label = "🩺 Data health: all clear" if not flagged else f"🩺 Data health: {len(flagged)} item(s) to look at"
+
+    with st.expander(f"{label} (checked {stamp})", expanded=bool([c for c in flagged if c[1] == "Problem"])):
+        st.dataframe(pd.DataFrame(checks, columns=["Item", "Status", "Detail"]), hide_index=True)
+
+        if not deep:
+            st.caption("History and expense checks run once you press Analyze, Compare or Compare in detail.")
+
+        st.caption(
+            "Runs on every load. Live data (prices, holdings, headlines, shows) is checked for age and completeness. "
+            "Rules and rates that live in text (tax law, pay tables, VA rates) cannot be pulled from a feed, so the "
+            "panel shows when they were verified and when they are due."
+        )
+
+
+def military_tab():
+    st.header("🎖️ Military: pay, TSP, retirement, separation, VA")
+    st.caption(
+        f"2026 figures: DFAS pay table (3.8% raise), BAS ${BAS_2026['Officer']:.2f} officer, TSP limit "
+        f"${TSP_LIMIT_2026:,}, IRS 2026 brackets and standard deduction, VA rates effective Dec 1, 2025. "
+        f"Verified {STATIC_FACTS_VERIFIED}. Copy exact numbers from your LES; nothing typed here is saved."
+    )
+
+    # ---- 1. Pay and taxes now
+    st.markdown("### 1. My pay and taxes now")
+    a1, a2, a3 = st.columns(3)
+
+    with a1:
+        grade = st.selectbox("Pay grade:", list(PAY_2026.keys()), index=1, key="mil_grade")
+        yos = st.number_input("Years of service (LES 'YRS SVC'):", min_value=0, max_value=30, value=4, step=1, key="mil_yos")
+        status = st.selectbox("Filing status:", list(STD_DEDUCTION_2026.keys()), index=0, key="mil_status")
+
+    with a2:
+        bah = st.number_input("BAH per month ($, from LES; 0 if you don't get it):", min_value=0, value=0, step=50, key="mil_bah")
+        bas = st.number_input("BAS per month ($):", min_value=0.0, value=float(BAS_2026["Officer"]), step=1.0, key="mil_bas")
+        other = st.number_input("Other taxable pay per month ($, special pays, bonuses):", min_value=0, value=0, step=50, key="mil_other")
+
+    with a3:
+        roth_pct = st.number_input("Roth TSP contribution (% of base pay):", min_value=0, max_value=100, value=5, step=1, key="mil_roth")
+        trad_pct = st.number_input("Traditional TSP contribution (% of base pay):", min_value=0, max_value=100, value=0, step=1, key="mil_trad")
+        state_pct = st.number_input("State income tax rate (%; 0 for Texas):", min_value=0.0, max_value=15.0, value=0.0, step=0.5, key="mil_state")
+
+    base = basic_pay_2026(grade, yos)
+    pay = military_pay_summary(base, float(bah), float(bas), float(other), roth_pct, trad_pct, status, state_pct)
+
+    st.caption(f"2026 basic pay for {grade} at {yos} years: ${base:,.2f} a month. The LES is the truth; this table is the reference.")
+
+    p1, p2, p3, p4 = st.columns(4)
+    p1.metric("Cash per month (before tax)", f"${pay['gross_cash']:,.0f}")
+    p2.metric("Take-home per month", f"${pay['take_home']:,.0f}", help="After federal tax, Social Security, Medicare, state tax and your TSP contribution.")
+    p3.metric("Agency TSP per month", f"${pay['agency_tsp']:,.0f}", help="1% automatic plus the match, always traditional (pre-tax) even when your own money is Roth.")
+    p4.metric("Total compensation per month", f"${pay['total_comp']:,.0f}", help="Cash plus agency TSP plus what the tax-free allowances would have cost you in federal tax. Health care (Tricare) is on top and not counted.")
+
+    st.dataframe(pd.DataFrame([
+        {"Line": "Basic pay (taxable)", "Per month": f"${pay['base']:,.2f}", "Per year": f"${pay['base'] * 12:,.0f}"},
+        {"Line": "Other taxable pay", "Per month": f"${pay['other']:,.2f}", "Per year": f"${pay['other'] * 12:,.0f}"},
+        {"Line": "BAH + BAS (tax-free)", "Per month": f"${pay['allowances']:,.2f}", "Per year": f"${pay['allowances'] * 12:,.0f}"},
+        {"Line": "Taxable wages after traditional TSP", "Per month": f"${pay['taxable_wages']:,.2f}", "Per year": f"${pay['taxable_wages'] * 12:,.0f}"},
+        {"Line": f"Federal income tax (marginal {pay['marginal']:.0%})", "Per month": f"-${pay['fed']:,.2f}", "Per year": f"-${pay['fed'] * 12:,.0f}"},
+        {"Line": "Social Security 6.2% + Medicare 1.45%", "Per month": f"-${pay['ss'] + pay['medicare']:,.2f}", "Per year": f"-${(pay['ss'] + pay['medicare']) * 12:,.0f}"},
+        {"Line": "State income tax", "Per month": f"-${pay['state']:,.2f}", "Per year": f"-${pay['state'] * 12:,.0f}"},
+        {"Line": f"Your TSP ({roth_pct}% Roth + {trad_pct}% traditional)", "Per month": f"-${pay['employee_tsp']:,.2f}", "Per year": f"-${pay['employee_tsp'] * 12:,.0f}"},
+        {"Line": "Take-home", "Per month": f"${pay['take_home']:,.2f}", "Per year": f"${pay['take_home'] * 12:,.0f}"},
+        {"Line": "Agency TSP (not in your check)", "Per month": f"${pay['agency_tsp']:,.2f}", "Per year": f"${pay['agency_tsp'] * 12:,.0f}"},
+    ]), hide_index=True)
+    st.caption(
+        f"Federal tax uses the 2026 standard deduction (${STD_DEDUCTION_2026[status]:,}) and brackets with only this pay as income. "
+        "BAH and BAS never show up in W-2 box 1. Roth TSP money is taxed now and never again; traditional TSP is the opposite. "
+        f"A deployment to a designated combat zone makes basic pay tax-free too (not the case for most European rotations)."
+    )
+
+    # ---- 2. TSP
+    st.markdown("### 2. TSP: where 5% Roth in the C Fund ends up")
+    st.caption(
+        "The C Fund tracks the S&P 500, so the growth assumption starts at the S&P 500's own 10-year rate from this app's "
+        "index-extended history (VOO). Agency money vests after 2 years of service for the automatic 1%; the match is yours immediately."
+    )
+    voo = get_full_stats("VOO")
+    default_growth = (voo or {}).get("10Y CAGR") or 0.10
+    t1, t2 = st.columns(2)
+
+    with t1:
+        tsp_growth = st.number_input("Assumed C Fund growth per year (%):", min_value=0.0, max_value=25.0,
+                                     value=float(min(max(round(default_growth * 100, 1), 0.0), 25.0)), step=0.5, key="mil_tsp_growth")
+        tsp_now = st.number_input("TSP balance today ($, optional):", min_value=0, value=0, step=1000, key="mil_tsp_now")
+
+    with t2:
+        years_more = st.number_input("Years you will keep contributing:", min_value=1, max_value=40, value=16, step=1, key="mil_tsp_years")
+
+    rows = []
+
+    for label, emp_pct in [(f"Your plan ({roth_pct + trad_pct}%)", roth_pct + trad_pct), ("If you did 10%", 10), ("If you did 15%", 15)]:
+        emp = base * emp_pct / 100
+        match = min(emp_pct, 3) * 1.0 + max(min(emp_pct, 5) - 3, 0) * 0.5
+        agency = base * (1 + match) / 100
+        end, yours, theirs = tsp_projection(emp, agency, int(years_more), tsp_growth / 100)
+        end += tsp_now * (1 + tsp_growth / 100) ** years_more
+        rows.append({
+            "Contribution": label,
+            "You put in / month": f"${emp:,.0f}",
+            "Agency adds / month": f"${agency:,.0f}",
+            f"Balance after {years_more} yrs": f"${end:,.0f}",
+            "Of which agency money": f"${theirs:,.0f}",
+        })
+
+    st.dataframe(pd.DataFrame(rows), hide_index=True)
+    st.caption(
+        f"Held at today's base pay (promotions and raises make the real number bigger). 2026 limit on your own contributions: "
+        f"${TSP_LIMIT_2026:,}. 5% is the floor that captures the full match; every dollar above it is unmatched but still Roth."
+    )
+
+    # ---- 3. Retirement at 20
+    st.markdown("### 3. If you stay to 20 years (Blended Retirement System)")
+    r1, r2 = st.columns(2)
+
+    with r1:
+        ret_grade = st.selectbox("Grade at retirement:", ["O-4", "O-5", "O-6"], index=1, key="mil_ret_grade")
+        ret_years = st.number_input("Years of service at retirement:", min_value=20, max_value=30, value=20, step=1, key="mil_ret_years")
+
+    with r2:
+        high3_default = (basic_pay_2026(ret_grade, 18) + basic_pay_2026(ret_grade, 20)) / 2
+        high3 = st.number_input("Average monthly base pay over your last 36 months ($):", min_value=0.0,
+                                value=float(round(high3_default, 2)), step=100.0, key="mil_high3",
+                                help="Starts at the 2026 pay for that grade averaged across years 18-20. Future raises will push it up.")
+
+    pension_month = 0.02 * ret_years * high3
+    pension_fed, pension_marginal = federal_tax_2026(max(pension_month * 12 - STD_DEDUCTION_2026[status], 0), status)
+    q1, q2, q3 = st.columns(3)
+    q1.metric("Pension per month (today's dollars)", f"${pension_month:,.0f}")
+    q2.metric("Per year", f"${pension_month * 12:,.0f}")
+    q3.metric("Federal tax if it were your only income", f"${pension_fed:,.0f} / yr")
+    st.markdown(
+        f"Blended Retirement System math: 2.0% x {ret_years} years x ${high3:,.0f} = **${pension_month:,.0f} a month**, "
+        "paid for life with yearly cost-of-living increases, starting the day after retirement. It is taxed as ordinary income "
+        "federally (no Social Security tax), and not at all in Texas. Retirees keep Tricare (small enrollment fees), the "
+        "TSP with the agency money on top, and continuation pay along the way (between years 8 and 12 the Army pays at least "
+        "2.5 months of base pay for a 3-year commitment). At retirement you can also take 25% or 50% of the pension as a lump "
+        "sum in exchange for a smaller check until age 67; on the numbers that is almost always a bad trade."
+    )
+    st.markdown(
+        "**Pension plus VA disability:** with 20 years and a VA rating of 50% or higher you receive both in full (CRDP). "
+        "Below 50% the VA amount is subtracted from the pension, but that portion becomes tax-free, so it still helps. "
+        "Combat-related conditions can qualify for CRSC at any rating."
+    )
+
+    # ---- 4. Separation before 20
+    st.markdown("### 4. If you leave before 20 years")
+    isp_full = 0.10 * yos * base * 12
+    st.markdown(
+        f"No pension. What you keep: the TSP (your money always; the agency money once vested), the Roth TSP can stay put or roll "
+        "to a Roth IRA with no tax, and every VA benefit below. If the separation is involuntary and honorable with 6 or more "
+        f"years of service, involuntary separation pay is 10% x years x annual base pay (about **${isp_full:,.0f}** at {grade} "
+        f"with {yos} years, taxed as income, and later recouped dollar-for-dollar from any VA disability pay until repaid; "
+        "the half rate is 5%). Unemployment insurance for ex-service members (UCX) is paid by the state you live in."
+    )
+    st.dataframe(pd.DataFrame([
+        {"Benefit": "Post-9/11 GI Bill", "What it is": "36 months of tuition at public-school rates (full after 36 months of service), a monthly housing allowance at the E-5-with-dependents BAH rate of the school's ZIP, and $1,000 a year for books.", "Watch-out": "Transferring it to a spouse or child must be done WHILE STILL SERVING (needs 6 years served and a 4-year further commitment)."},
+        {"Benefit": "Texas Hazlewood Act", "What it is": "Up to 150 credit hours tuition-free at Texas public colleges for veterans who entered service in Texas or had Texas as home of record, honorably discharged, 181+ days active duty.", "Watch-out": "Applies when federal GI Bill benefits are used up or do not cover the tuition for that term."},
+        {"Benefit": "VA home loan", "What it is": "No down payment, no mortgage insurance; funding fee 2.15% on a first use with nothing down.", "Watch-out": "The funding fee is waived entirely with a VA rating of 10% or more."},
+        {"Benefit": "VR&E (Chapter 31)", "What it is": "Retraining, degree or certification paid in full with a monthly stipend, for a service-connected rating of 20% or more (10% with a serious employment handicap).", "Watch-out": "Separate from the GI Bill and can be used first, saving the GI Bill."},
+        {"Benefit": "VA health care", "What it is": "Enrollment priority rises with rating; 50%+ means no copays for anything.", "Watch-out": "Apply right after separation; Tricare ends (TAMP gives 180 days of Tricare only for involuntary separations and some other cases)."},
+        {"Benefit": "Texas property tax", "What it is": "Homestead exemption of $5,000 to $12,000 by rating; a 100% rating (or unemployability) exempts the whole homestead.", "Watch-out": "Applies to the Texas home you live in, not a rental."},
+        {"Benefit": "SGLI to VGLI", "What it is": "The $500k SGLI life insurance ends 120 days after separation; VGLI continues it.", "Watch-out": "Apply within 240 days for no health questions; the deadline is 1 year and 120 days."},
+        {"Benefit": "SkillBridge and TAP", "What it is": "Up to the last 180 days of service working for a civilian employer while still paid; the Transition Assistance Program is required starting a year out.", "Watch-out": "Needs command approval; apply early."},
+        {"Benefit": "Reserve or National Guard", "What it is": "Keep accruing points toward a reserve retirement paid from about age 60, keep Tricare Reserve Select, keep the TSP match.", "Watch-out": "Reserve retirement is smaller and starts later, but it is not zero."},
+    ]), hide_index=True)
+
+    # ---- 5. VA disability
+    st.markdown("### 5. VA disability: combined rating and monthly pay")
+    v1, v2 = st.columns(2)
+
+    with v1:
+        ratings_text = st.text_input("Ratings for each condition (%):", "30, 10, 10", key="mil_va_ratings",
+                                     help="VA does not add them. Each one takes its share of what is left, then it rounds to the nearest 10.")
+
+    with v2:
+        with_spouse = st.checkbox("Married (adds spouse pay at 30%+)", value=False, key="mil_va_spouse")
+
+    try:
+        ratings = [int(float(x)) for x in ratings_text.replace(";", ",").split(",") if x.strip()]
+    except ValueError:
+        ratings = []
+
+    combined, exact = va_combined_rating(ratings)
+    monthly = va_monthly_2026(combined, with_spouse)
+    w1, w2, w3 = st.columns(3)
+    w1.metric("Combined rating", f"{combined}%", help=f"Exact before rounding: {exact:.1f}%")
+    w2.metric("Per month (tax-free)", f"${monthly:,.2f}")
+    w3.metric("Per year (tax-free)", f"${monthly * 12:,.0f}")
+    st.dataframe(pd.DataFrame([
+        {"Rating": f"{r}%", "Veteran alone": f"${a:,.2f}", "With spouse": f"${s:,.2f}"} for r, (a, s) in VA_RATES_2026.items()
+    ]), hide_index=True)
+    st.caption(
+        "Monthly rates effective Dec 1, 2025 (2.8% cost-of-living increase); children and dependent parents add more from 30% up. "
+        "VA pay is tax-free at every level, stacks on top of civilian pay, and never reduces Social Security. "
+        "File a Benefits Delivery at Discharge claim 180 to 90 days before separation so the rating decision arrives with the DD-214."
+    )
+
+
 def show_chart(fig):
     """Full-width chart on both new and old Streamlit versions."""
     try:
@@ -2294,7 +2895,9 @@ def show_chart(fig):
 
 # --- UI ---
 def main():
-    tab1, tab2, tab3, tab4, tab5, tab_cmp, tab_tax, tab6, tab7 = st.tabs([
+    render_health(parse_tickers(st.session_state.get("xray_tickers", DEFAULT_PORT)) or parse_tickers(DEFAULT_PORT))
+
+    tab1, tab2, tab3, tab4, tab5, tab_cmp, tab_tax, tab_mil, tab6, tab7 = st.tabs([
         "🚀 X-Ray",
         "🆚 Benchmark",
         "📈 Dividends",
@@ -2302,6 +2905,7 @@ def main():
         "👀 Watchlist",
         "⚖️ Compare",
         "🧾 Taxes",
+        "🎖️ Military",
         "📰 Insights & Updates",
         "🎧 Shows & Voices",
     ])
@@ -2387,7 +2991,7 @@ def main():
                     if ratio is not None:
                         blended_expense += ratio * weight
                         expense_weight += weight
-                        expense_bits.append(f"{ticker} {ratio:.2%}")
+                        expense_bits.append(f"{ticker} {fmt_expense(ratio)}")
 
                 if expense_weight > 0:
                     st.caption(
@@ -2565,6 +3169,30 @@ def main():
                         "MY PORTFOLIO is weighted by your X-Ray percentages."
                     )
 
+                    st.markdown("### 💵 Payout history, per share")
+
+                    for ticker in t_list:
+                        detail = dividend_detail(ticker)
+
+                        if not detail or not detail["rows"]:
+                            continue
+
+                        note = f" (showing {detail['source']}'s record, same index)" if detail["source"] != ticker else ""
+
+                        with st.expander(f"{ticker}: last payout ${detail['last_amount']:.4f} on {detail['last_date']}{note}", expanded=len(t_list) <= 4):
+                            m1, m2, m3, m4 = st.columns(4)
+                            m1.metric("Last payout / share", f"${detail['last_amount']:.4f}")
+                            m2.metric("Change vs. a year earlier", f"{detail['yoy']:+.1%}" if detail["yoy"] is not None else "-")
+                            m3.metric("Last 12 months / share", f"${detail['ttm']:.4f}" if detail["ttm"] is not None else "-")
+                            m4.metric("12-month total change", f"{detail['ttm_change']:+.1%}" if detail["ttm_change"] is not None else "-")
+                            st.dataframe(pd.DataFrame(detail["rows"]), hide_index=True)
+                            pay_note = (
+                                f"Yahoo lists the pay date as {detail['pay_date_yahoo']}."
+                                if detail.get("pay_date_yahoo")
+                                else "Yahoo does not publish ETF pay dates; they usually fall 2 to 7 days after the ex-date (the issuer's site has the exact day)."
+                            )
+                            st.caption(f"Usual payout months: {detail['usual_months']}. {pay_note} Ex-date = the day you must already own shares to get that payout.")
+
     # --- TAB 4: DEEP DIVE ---
     with tab4:
         st.header("Multi-ETF Deep Dive")
@@ -2610,6 +3238,18 @@ def main():
                         )
                         d3.metric("Bottom reached", stats.get("DD Date", "-"))
                         d4.metric("10Y CAGR", pct_or_na(stats.get("10Y CAGR")))
+
+                        detail = dividend_detail(ticker)
+
+                        if detail and detail.get("last_amount") is not None:
+                            e1, e2, e3, e4 = st.columns(4)
+                            e1.metric("Last payout / share", f"${detail['last_amount']:.4f}")
+                            e2.metric("Ex-date", detail["last_date"])
+                            e3.metric("Change vs. a year earlier", f"{detail['yoy']:+.1%}" if detail["yoy"] is not None else "-")
+                            e4.metric("Last 12 months / share", f"${detail['ttm']:.4f}")
+                            note = f" Showing {detail['source']}'s record (same index) until {ticker} has a full year." if detail["source"] != ticker else ""
+                            pay_note = f" Pay date per Yahoo: {detail['pay_date_yahoo']}." if detail.get("pay_date_yahoo") else " Pay date: usually 2 to 7 days after the ex-date (issuer site has the exact day)."
+                            st.caption(f"Usual payout months: {detail['usual_months']}.{pay_note}{note}")
 
                     df, holdings_source = get_holdings(ticker)
 
@@ -2846,7 +3486,7 @@ def main():
                 default_growth = blended_now.get("10Y CAGR")
                 growth_pct = st.number_input(
                     "Assumed growth per year (%):", min_value=0.0, max_value=40.0,
-                    value=float(round((default_growth or 0.10) * 100, 1)), step=0.5, key="tax_growth",
+                    value=float(min(max(round((default_growth or 0.10) * 100, 1), 0.0), 40.0)), step=0.5, key="tax_growth",
                     help="Starts at your blend's 10-year growth rate. Yields and tax rates are held constant."
                 )
                 g = growth_pct / 100
@@ -2898,6 +3538,10 @@ def main():
             "which a never-sell holder always meets; M1 sells specific lots in a set order when you do sell, so "
             "check that setting before any sale; and holding until you pass it on gives heirs a stepped-up basis."
         )
+
+    # --- TAB: MILITARY ---
+    with tab_mil:
+        military_tab()
 
     # --- TAB 6: LIVE INSIGHTS & UPDATES ---
     with tab6:
