@@ -75,6 +75,19 @@ TICKERS = [
 
 EXTRA_FILE = "tickers_extra.txt"
 
+# Funds whose issuer publishes a daily holdings file. Tried in addition to Fidelity; whichever
+# source returns MORE names wins (Fidelity's page has been seen returning a cut-off list).
+INVESCO_TICKERS = {"QQQ", "QQQM", "QQQJ", "SPMO", "SPLV", "SPHD", "SPHQ", "SPGP", "PRF", "PBW", "RSP"}
+INVESCO_URL = (
+    "https://www.invesco.com/us/financial-products/etfs/holdings/main/holdings/0"
+    "?audienceType=Investor&action=download&ticker={ticker}"
+)
+
+# Rough number of names each fund really holds; a fetch far below it is treated as cut off.
+EXPECTED = {"SPMO": 100, "QQQ": 101, "QQQM": 101, "QNDX": 101, "VGT": 320, "FTEC": 300, "SMH": 26,
+            "VOO": 500, "SPY": 500, "IVV": 500, "SPLG": 500, "SCHG": 200, "VUG": 150, "XLK": 70,
+            "SOXX": 30, "IYW": 140, "MGK": 70, "MTUM": 125}
+
 URL = (
     "https://research2.fidelity.com/fidelity/screeners/etf/public/"
     "etfholdings.asp?symbol={ticker}&view=Holdings"
@@ -207,6 +220,61 @@ def fetch_ticker(ticker):
     return parse_holdings(response.text)
 
 
+def parse_invesco_csv(text):
+    """Invesco's download is a CSV with 'Holding Ticker' and 'Weight' columns (weight in percent)."""
+    import csv
+    import io
+
+    rows = []
+    reader = csv.reader(io.StringIO(text))
+    header = None
+
+    for record in reader:
+        cells = [c.strip() for c in record]
+
+        if header is None:
+            lowered = [c.lower() for c in cells]
+
+            if any("holding ticker" in c for c in lowered) and any(c.startswith("weight") for c in lowered):
+                header = lowered
+                sym_i = next(i for i, c in enumerate(header) if "holding ticker" in c)
+                wt_i = next(i for i, c in enumerate(header) if c.startswith("weight"))
+
+            continue
+
+        if len(cells) <= max(sym_i, wt_i):
+            continue
+
+        symbol = cells[sym_i].upper().replace(" ", "")
+
+        if not symbol or symbol in BAD_SYMBOLS or not SYMBOL_RE.match(symbol):
+            continue
+
+        try:
+            weight = float(cells[wt_i].replace("%", "").replace(",", "")) / 100.0
+        except ValueError:
+            continue
+
+        if weight > 0:
+            rows.append([symbol, round(weight, 6)])
+
+    total = sum(w for _, w in rows)
+
+    if len(rows) >= 5 and 0.4 <= total <= 1.6:
+        return rows
+
+    return []
+
+
+def fetch_invesco(ticker):
+    response = requests.get(INVESCO_URL.format(ticker=ticker), impersonate="chrome", timeout=25)
+
+    if response.status_code != 200 or not response.text:
+        raise RuntimeError(f"HTTP {response.status_code}")
+
+    return parse_invesco_csv(response.text)
+
+
 def main():
     try:
         with open(OUT_FILE, "r", encoding="utf-8") as fh:
@@ -220,18 +288,41 @@ def main():
     updated, kept = [], []
 
     for ticker in universe:
+        rows, asof, source = [], None, "Fidelity"
+
         try:
             rows, asof = fetch_ticker(ticker)
         except Exception as err:
-            print(f"{ticker}: fetch failed ({err}) - keeping previous snapshot")
-            kept.append(ticker)
-            time.sleep(1.5)
-            continue
+            print(f"{ticker}: Fidelity fetch failed ({err})")
+
+        # Issuer file, if we have one: keep whichever list is longer.
+        if ticker in INVESCO_TICKERS:
+            try:
+                issuer_rows = fetch_invesco(ticker)
+
+                if len(issuer_rows) > len(rows):
+                    rows, source = issuer_rows, "Invesco"
+                    asof = asof or time.strftime("%m/%d/%Y")
+            except Exception as err:
+                print(f"{ticker}: Invesco fetch failed ({err})")
+
+        previous = len((data.get(ticker) or {}).get("rows") or [])
+        expected = EXPECTED.get(ticker)
+
+        if rows and expected and len(rows) < 0.6 * expected:
+            print(f"{ticker}: only {len(rows)} names from {source}, fund holds ~{expected} - looks cut off")
+
+            if previous >= len(rows):
+                rows = []
+
+        if rows and previous and len(rows) < 0.6 * previous:
+            print(f"{ticker}: {len(rows)} names is far below the previous {previous} - keeping previous snapshot")
+            rows = []
 
         if rows:
             data[ticker] = {"asof": asof or "", "rows": rows}
             updated.append(ticker)
-            print(f"{ticker}: {len(rows)} holdings, sum {sum(w for _, w in rows):.4f}, as of {asof}")
+            print(f"{ticker}: {len(rows)} holdings ({source}), sum {sum(w for _, w in rows):.4f}, as of {asof}")
         else:
             kept.append(ticker)
             print(f"{ticker}: no usable table - keeping previous snapshot")
