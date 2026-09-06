@@ -20,7 +20,23 @@ import plotly.express as px
 st.set_page_config(page_title="Master Portfolio", page_icon="📊", layout="wide")
 st.title("📊 Master Portfolio: Light Rios Edition")
 
-APP_VERSION = "2.3 (Sep 5, 2026)"
+# Streamlit treats text between two dollar signs as a math formula. Every "$" in this app is money,
+# so all markdown and captions go through these two wrappers, which escape the sign.
+_st_markdown, _st_caption = st.markdown, st.caption
+
+
+def _money_safe(text):
+    return text.replace("$", "\\$") if isinstance(text, str) else text
+
+
+def md(body, **kwargs):
+    return _st_markdown(_money_safe(body), **kwargs)
+
+
+def cap(body, **kwargs):
+    return _st_caption(_money_safe(body), **kwargs)
+
+APP_VERSION = "2.4 (Sep 6, 2026)"
 
 # Your actual portfolio. Every tab starts with these tickers at these percentages.
 DEFAULT_PORT = "SPMO, QNDX, FTEC, SMH"
@@ -2295,6 +2311,172 @@ VA_RATES_2026 = {
 }
 
 
+# --- BAH BY ZIP CODE (reads the DoD "All BAH Rates" ASCII files if they are in the repo) ---
+# Get them once a year: travel.dod.mil > Allowances > Basic Allowance for Housing > BAH Rate Lookup >
+# "All BAH Rates" > File Type ASCII > Year > Download. Unzip and upload the three .txt files
+# (with-dependents rates, without-dependents rates, ZIP-to-area list) to the GitHub repository.
+BAH_GRADES = ["E01", "E02", "E03", "E04", "E05", "E06", "E07", "E08", "E09", "W01", "W02", "W03", "W04", "W05",
+              "O01E", "O02E", "O03E", "O01", "O02", "O03", "O04", "O05", "O06", "O07"]
+BAH_FILE_PATTERNS = {
+    "with": re.compile(r"^bahw(\d\d)\.txt$", re.I),
+    "without": re.compile(r"^bahwo(\d\d)\.txt$", re.I),
+    "zip": re.compile(r"^sorted_zipmha(\d\d)\.txt$", re.I),
+    "names": re.compile(r"^mhanames(\d\d)?\.txt$", re.I),
+}
+MHA_RE = re.compile(r"^[A-Z]{2}\d{3}$")
+
+
+def _bah_file_paths():
+    """Newest set of DoD BAH files sitting next to app.py, by two-digit year."""
+    folder = os.path.dirname(os.path.abspath(__file__))
+    found = {}
+
+    try:
+        names = os.listdir(folder)
+    except Exception:
+        return {}
+
+    for name in names:
+        for key, pattern in BAH_FILE_PATTERNS.items():
+            match = pattern.match(name)
+
+            if match:
+                year = match.group(1) or "00"
+                found.setdefault(key, []).append((year, os.path.join(folder, name)))
+
+    if "with" not in found or "without" not in found or "zip" not in found:
+        return {}
+
+    year = max(y for y, _ in found["with"])
+    picked = {"year": "20" + year}
+
+    for key in ("with", "without", "zip", "names"):
+        candidates = [p for y, p in found.get(key, []) if y == year] or [p for _, p in found.get(key, [])]
+
+        if candidates:
+            picked[key] = sorted(candidates)[-1]
+
+    return picked
+
+
+def _parse_bah_rates(path):
+    rates = {}
+
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            parts = [p.strip() for p in re.split(r"[,\s]+", line.strip()) if p.strip()]
+
+            if len(parts) < 25 or not MHA_RE.match(parts[0].upper()):
+                continue
+
+            numbers = []
+
+            for token in parts[1:]:
+                try:
+                    numbers.append(float(token.replace("$", "")))
+                except ValueError:
+                    break
+
+            if len(numbers) >= len(BAH_GRADES):
+                rates[parts[0].upper()] = dict(zip(BAH_GRADES, numbers[:len(BAH_GRADES)]))
+
+    return rates
+
+
+def _parse_zip_mha(path):
+    zips = {}
+
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            parts = [p.strip() for p in re.split(r"[,\s]+", line.strip()) if p.strip()]
+            zip_code = next((p for p in parts if re.fullmatch(r"\d{5}", p)), None)
+            mha = next((p.upper() for p in parts if MHA_RE.match(p.upper())), None)
+
+            if zip_code and mha:
+                zips[zip_code] = mha
+
+    return zips
+
+
+def _parse_mha_names(path):
+    names = {}
+
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            parts = [p.strip() for p in line.strip().split(",")]
+
+            if len(parts) >= 2 and MHA_RE.match(parts[0].upper()):
+                names[parts[0].upper()] = ", ".join(p for p in parts[1:] if p)
+
+    return names
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def load_bah_tables():
+    """None when the DoD files are not in the repo; otherwise the parsed tables."""
+    paths = _bah_file_paths()
+
+    if not paths:
+        return None
+
+    try:
+        tables = {
+            "year": paths["year"],
+            "with": _parse_bah_rates(paths["with"]),
+            "without": _parse_bah_rates(paths["without"]),
+            "zip": _parse_zip_mha(paths["zip"]),
+            "names": _parse_mha_names(paths["names"]) if paths.get("names") else {},
+        }
+    except Exception:
+        return None
+
+    if not tables["with"] or not tables["zip"]:
+        return None
+
+    return tables
+
+
+def bah_grade_code(pay_grade, prior_enlisted=False):
+    """'O-2' -> 'O02' (or 'O02E' for a prior-enlisted officer in O-1 to O-3)."""
+    code = pay_grade.replace("-", "").upper()
+
+    if len(code) == 2:
+        code = code[0] + "0" + code[1]
+
+    if prior_enlisted and code in ("O01", "O02", "O03"):
+        code += "E"
+
+    return code
+
+
+def bah_lookup(zip_code, pay_grade, with_dependents, prior_enlisted=False):
+    """Monthly BAH for a ZIP, grade and dependency status from the DoD tables. None if unavailable."""
+    tables = load_bah_tables()
+
+    if not tables:
+        return None
+
+    zip_code = "".join(ch for ch in str(zip_code) if ch.isdigit())[:5].zfill(5)
+    mha = tables["zip"].get(zip_code)
+
+    if not mha:
+        return {"error": f"ZIP {zip_code} is not in the DoD list"}
+
+    table = tables["with"] if with_dependents else tables["without"]
+    grade_code = bah_grade_code(pay_grade, prior_enlisted)
+    rate = (table.get(mha) or {}).get(grade_code)
+
+    if rate is None:
+        return {"error": f"no {grade_code} rate for area {mha}"}
+
+    return {"rate": rate, "mha": mha, "name": tables["names"].get(mha, mha), "year": tables["year"], "grade": grade_code}
+
+
+def todays_dollars(amount, years, inflation):
+    """What a future amount buys in today's money at a steady inflation rate."""
+    return amount / ((1 + inflation) ** years) if years > 0 else amount
+
+
 def basic_pay_2026(grade, years):
     row = PAY_2026.get(grade)
 
@@ -2482,7 +2664,18 @@ def data_health(tickers, deep=False):
     except Exception:
         checks.append(("Shows & Voices feeds", "Check", "Feed check did not run."))
 
-    # 5. Hand-entered facts and their verification date
+    # 5. BAH tables for the Military tab
+    tables = load_bah_tables()
+
+    if tables:
+        checks.append(("BAH rate tables (Military tab)", "OK" if tables["year"] == str(today.year) else "Check",
+                        f"DoD {tables['year']} files loaded: {len(tables['with'])} housing areas, {len(tables['zip']):,} ZIP codes."
+                        + ("" if tables["year"] == str(today.year) else " A newer year is out; upload the new files.")))
+    else:
+        checks.append(("BAH rate tables (Military tab)", "Check",
+                        "Not uploaded yet, so the ZIP lookup is off and BAH must be typed. See the tracker document for the 2-minute upload."))
+
+    # 6. Hand-entered facts and their verification date
     checks.append(("Fixed facts (verified " + STATIC_FACTS_VERIFIED + ")", "OK",
                     "Expense ratios, tax rules (2026), military pay tables (2026), BAS, TSP limit, VA rates (Dec 2025 COLA). "
                     "Due for a re-check every January and whenever a fund changes; ask Claude."))
@@ -2692,9 +2885,9 @@ def render_health(tickers):
         st.dataframe(pd.DataFrame(checks, columns=["Item", "Status", "Detail"]), hide_index=True)
 
         if not deep:
-            st.caption("History and expense checks run once you press Analyze, Compare or Compare in detail.")
+            cap("History and expense checks run once you press Analyze, Compare or Compare in detail.")
 
-        st.caption(
+        cap(
             "Runs on every load. Live data (prices, holdings, headlines, shows) is checked for age and completeness. "
             "Rules and rates that live in text (tax law, pay tables, VA rates) cannot be pulled from a feed, so the "
             "panel shows when they were verified and when they are due."
@@ -2703,14 +2896,14 @@ def render_health(tickers):
 
 def military_tab():
     st.header("🎖️ Military: pay, TSP, retirement, separation, VA")
-    st.caption(
+    cap(
         f"2026 figures: DFAS pay table (3.8% raise), BAS ${BAS_2026['Officer']:.2f} officer, TSP limit "
         f"${TSP_LIMIT_2026:,}, IRS 2026 brackets and standard deduction, VA rates effective Dec 1, 2025. "
         f"Verified {STATIC_FACTS_VERIFIED}. Copy exact numbers from your LES; nothing typed here is saved."
     )
 
     # ---- 1. Pay and taxes now
-    st.markdown("### 1. My pay and taxes now")
+    md("### 1. My pay and taxes now")
     a1, a2, a3 = st.columns(3)
 
     with a1:
@@ -2719,9 +2912,31 @@ def military_tab():
         status = st.selectbox("Filing status:", list(STD_DEDUCTION_2026.keys()), index=0, key="mil_status")
 
     with a2:
-        bah = st.number_input("BAH per month ($, from LES; 0 if you don't get it):", min_value=0, value=0, step=50, key="mil_bah")
+        zip_code = st.text_input("Duty station ZIP code (for BAH):", "40121", key="mil_zip",
+                                 help="Fort Knox is 40121. BAH is set by the duty station's area, not where you rent.")
+        dependents = st.selectbox("Dependents:", ["With dependents", "Without dependents"], index=0, key="mil_dep")
+        prior_enlisted = st.checkbox("Prior enlisted (O-1E/O-2E/O-3E rate)", value=False, key="mil_prior")
+        bah_override = st.number_input("BAH override per month ($; 0 = use the ZIP lookup):", min_value=0, value=0, step=50, key="mil_bah",
+                                       help="Type your LES figure here if it differs (rate protection after a move, for example).")
         bas = st.number_input("BAS per month ($):", min_value=0.0, value=float(BAS_2026["Officer"]), step=1.0, key="mil_bas")
         other = st.number_input("Other taxable pay per month ($, special pays, bonuses):", min_value=0, value=0, step=50, key="mil_other")
+
+    looked_up = bah_lookup(zip_code, grade, dependents == "With dependents", prior_enlisted)
+
+    if bah_override > 0:
+        bah = float(bah_override)
+        bah_note = f"BAH: using your override of ${bah:,.0f} a month."
+    elif looked_up and "rate" in looked_up:
+        bah = float(looked_up["rate"])
+        bah_note = (f"BAH: ${bah:,.0f} a month for {looked_up['grade']} {dependents.lower()} in area {looked_up['mha']} "
+                    f"({looked_up['name']}), DoD {looked_up['year']} table.")
+    elif looked_up and "error" in looked_up:
+        bah = 0.0
+        bah_note = f"BAH lookup: {looked_up['error']}. Type your LES figure in the override box."
+    else:
+        bah = 0.0
+        bah_note = ("BAH lookup is off because the DoD rate files are not in the repository yet. Type your LES figure in the "
+                    "override box for now; the tracker document explains the 2-minute upload that turns the ZIP lookup on.")
 
     with a3:
         roth_pct = st.number_input("Roth TSP contribution (% of base pay):", min_value=0, max_value=100, value=5, step=1, key="mil_roth")
@@ -2731,7 +2946,8 @@ def military_tab():
     base = basic_pay_2026(grade, yos)
     pay = military_pay_summary(base, float(bah), float(bas), float(other), roth_pct, trad_pct, status, state_pct)
 
-    st.caption(f"2026 basic pay for {grade} at {yos} years: ${base:,.2f} a month. The LES is the truth; this table is the reference.")
+    cap(f"2026 basic pay for {grade} at {yos} years: ${base:,.2f} a month. {bah_note} The LES is the truth; this table is the reference. "
+        "Everything in this section is today's dollars: it is what the money is worth now.")
 
     p1, p2, p3, p4 = st.columns(4)
     p1.metric("Cash per month (before tax)", f"${pay['gross_cash']:,.0f}")
@@ -2751,17 +2967,23 @@ def military_tab():
         {"Line": "Take-home", "Per month": f"${pay['take_home']:,.2f}", "Per year": f"${pay['take_home'] * 12:,.0f}"},
         {"Line": "Agency TSP (not in your check)", "Per month": f"${pay['agency_tsp']:,.2f}", "Per year": f"${pay['agency_tsp'] * 12:,.0f}"},
     ]), hide_index=True)
-    st.caption(
+    cap(
         f"Federal tax uses the 2026 standard deduction (${STD_DEDUCTION_2026[status]:,}) and brackets with only this pay as income. "
         "BAH and BAS never show up in W-2 box 1. Roth TSP money is taxed now and never again; traditional TSP is the opposite. "
         f"A deployment to a designated combat zone makes basic pay tax-free too (not the case for most European rotations)."
     )
 
     # ---- 2. TSP
-    st.markdown("### 2. TSP: where 5% Roth in the C Fund ends up")
-    st.caption(
+    md("### 2. TSP: where 5% Roth in the C Fund ends up")
+    cap(
         "The C Fund tracks the S&P 500, so the growth assumption starts at the S&P 500's own 10-year rate from this app's "
         "index-extended history (VOO). Agency money vests after 2 years of service for the automatic 1%; the match is yours immediately."
+    )
+    md(
+        "**Where the money lands.** Your 5% goes into your Roth balance (taxed now, never again). The agency's 1% automatic and "
+        "4% match are deposited into your traditional balance even though you elected Roth; the TSP has not turned on Roth "
+        "treatment of agency money as of 2026, so that part is taxed when you withdraw it. You can see the split on tsp.gov under "
+        "My Account, where Traditional and Roth balances are listed separately; the agency dollars sit under Traditional."
     )
     voo = get_full_stats("VOO")
     default_growth = (voo or {}).get("10Y CAGR") or 0.10
@@ -2774,6 +2996,9 @@ def military_tab():
 
     with t2:
         years_more = st.number_input("Years you will keep contributing:", min_value=1, max_value=40, value=16, step=1, key="mil_tsp_years")
+        inflation = st.number_input("Inflation assumption for 'today's dollars' (% per year):", min_value=0.0, max_value=10.0,
+                                    value=2.5, step=0.5, key="mil_inflation",
+                                    help="Used everywhere a future amount is shown in today's dollars. 2.5% is close to the long-run average.")
 
     rows = []
 
@@ -2786,19 +3011,21 @@ def military_tab():
         rows.append({
             "Contribution": label,
             "You put in / month": f"${emp:,.0f}",
-            "Agency adds / month": f"${agency:,.0f}",
-            f"Balance after {years_more} yrs": f"${end:,.0f}",
-            "Of which agency money": f"${theirs:,.0f}",
+            "Agency adds / month (traditional)": f"${agency:,.0f}",
+            f"Balance after {years_more} yrs (future dollars)": f"${end:,.0f}",
+            "Same balance in today's dollars": f"${todays_dollars(end, int(years_more), inflation / 100):,.0f}",
+            "Of which agency money (future dollars)": f"${theirs:,.0f}",
         })
 
     st.dataframe(pd.DataFrame(rows), hide_index=True)
-    st.caption(
+    cap(
         f"Held at today's base pay (promotions and raises make the real number bigger). 2026 limit on your own contributions: "
-        f"${TSP_LIMIT_2026:,}. 5% is the floor that captures the full match; every dollar above it is unmatched but still Roth."
+        f"${TSP_LIMIT_2026:,}. 5% is the floor that captures the full match; every dollar above it is unmatched but still Roth. "
+        f"'Today's dollars' divides the future balance by {inflation:.1f}% inflation compounded, so it is comparable to prices you know now."
     )
 
     # ---- 3. Retirement at 20
-    st.markdown("### 3. If you stay to 20 years (Blended Retirement System)")
+    md("### 3. If you stay to 20 years (Blended Retirement System)")
     r1, r2 = st.columns(2)
 
     with r1:
@@ -2814,10 +3041,11 @@ def military_tab():
     pension_month = 0.02 * ret_years * high3
     pension_fed, pension_marginal = federal_tax_2026(max(pension_month * 12 - STD_DEDUCTION_2026[status], 0), status)
     q1, q2, q3 = st.columns(3)
-    q1.metric("Pension per month (today's dollars)", f"${pension_month:,.0f}")
+    q1.metric("Pension per month (today's dollars)", f"${pension_month:,.0f}",
+              help="Built from the 2026 pay table, so it is in today's money. The real check will be larger in future dollars because pay tables and the yearly cost-of-living increase both track inflation.")
     q2.metric("Per year", f"${pension_month * 12:,.0f}")
     q3.metric("Federal tax if it were your only income", f"${pension_fed:,.0f} / yr")
-    st.markdown(
+    md(
         f"Blended Retirement System math: 2.0% x {ret_years} years x ${high3:,.0f} = **${pension_month:,.0f} a month**, "
         "paid for life with yearly cost-of-living increases, starting the day after retirement. It is taxed as ordinary income "
         "federally (no Social Security tax), and not at all in Texas. Retirees keep Tricare (small enrollment fees), the "
@@ -2825,17 +3053,17 @@ def military_tab():
         "2.5 months of base pay for a 3-year commitment). At retirement you can also take 25% or 50% of the pension as a lump "
         "sum in exchange for a smaller check until age 67; on the numbers that is almost always a bad trade."
     )
-    st.markdown(
+    md(
         "**Pension plus VA disability:** with 20 years and a VA rating of 50% or higher you receive both in full (CRDP). "
         "Below 50% the VA amount is subtracted from the pension, but that portion becomes tax-free, so it still helps. "
         "Combat-related conditions can qualify for CRSC at any rating."
     )
 
     # ---- 4. Separation before 20
-    st.markdown("### 4. If you leave before 20 years")
+    md("### 4. If you leave before 20 years")
     isp_full = 0.10 * yos * base * 12
-    st.markdown(
-        f"No pension. What you keep: the TSP (your money always; the agency money once vested), the Roth TSP can stay put or roll "
+    md(
+        f"All figures here are today's dollars. No pension. What you keep: the TSP (your money always; the agency money once vested), the Roth TSP can stay put or roll "
         "to a Roth IRA with no tax, and every VA benefit below. If the separation is involuntary and honorable with 6 or more "
         f"years of service, involuntary separation pay is 10% x years x annual base pay (about **${isp_full:,.0f}** at {grade} "
         f"with {yos} years, taxed as income, and later recouped dollar-for-dollar from any VA disability pay until repaid; "
@@ -2854,7 +3082,7 @@ def military_tab():
     ]), hide_index=True)
 
     # ---- 5. VA disability
-    st.markdown("### 5. VA disability: combined rating and monthly pay")
+    md("### 5. VA disability: combined rating and monthly pay")
     v1, v2 = st.columns(2)
 
     with v1:
@@ -2873,12 +3101,12 @@ def military_tab():
     monthly = va_monthly_2026(combined, with_spouse)
     w1, w2, w3 = st.columns(3)
     w1.metric("Combined rating", f"{combined}%", help=f"Exact before rounding: {exact:.1f}%")
-    w2.metric("Per month (tax-free)", f"${monthly:,.2f}")
-    w3.metric("Per year (tax-free)", f"${monthly * 12:,.0f}")
+    w2.metric("Per month (tax-free, today's dollars)", f"${monthly:,.2f}")
+    w3.metric("Per year (tax-free, today's dollars)", f"${monthly * 12:,.0f}", help="VA rates get a cost-of-living increase every December, so the real amount keeps pace with prices.")
     st.dataframe(pd.DataFrame([
         {"Rating": f"{r}%", "Veteran alone": f"${a:,.2f}", "With spouse": f"${s:,.2f}"} for r, (a, s) in VA_RATES_2026.items()
     ]), hide_index=True)
-    st.caption(
+    cap(
         "Monthly rates effective Dec 1, 2025 (2.8% cost-of-living increase); children and dependent parents add more from 30% up. "
         "VA pay is tax-free at every level, stacks on top of civilian pay, and never reduces Social Security. "
         "File a Benefits Delivery at Discharge claim 180 to 90 days before separation so the rating decision arrives with the DD-214."
@@ -2940,7 +3168,7 @@ def main():
                 weights = {ticker: weight / total_w for ticker, weight in raw_weights.items()}
 
                 if abs(total_w - 1.0) > 0.005:
-                    st.caption(f"Percentages sum to {total_w * 100:.0f}% - normalized to 100% for the math below.")
+                    cap(f"Percentages sum to {total_w * 100:.0f}% - normalized to 100% for the math below.")
             else:
                 weights = raw_weights
                 st.warning("Set at least one ETF weight above 0.")
@@ -2958,7 +3186,7 @@ def main():
 
             if st.session_state.get("xray_go") and total_w > 0:
                 st.subheader("📈 Blended Performance")
-                st.caption(
+                cap(
                     "Long-period figures use index-extended history (older same-index funds / "
                     "indexes spliced in before each ETF's inception)."
                 )
@@ -2976,7 +3204,7 @@ def main():
                         notes.append(f"{period} excludes {', '.join(missing)}")
 
                 if notes:
-                    st.caption(
+                    cap(
                         "Where a fund is younger than the window it is left out and the figure is "
                         "re-weighted across the rest: " + "; ".join(notes) + "."
                     )
@@ -2994,18 +3222,18 @@ def main():
                         expense_bits.append(f"{ticker} {fmt_expense(ratio)}")
 
                 if expense_weight > 0:
-                    st.caption(
+                    cap(
                         f"Blended expense ratio: **{blended_expense / expense_weight:.2%}** per year "
                         f"({' | '.join(expense_bits)})."
                     )
 
-                st.markdown("---")
+                md("---")
 
                 full, source_counts = build_blended_holdings(etfs, weights)
 
                 if full.empty:
                     st.warning("Could not load holdings data for the selected ETFs.")
-                    st.caption(
+                    cap(
                         "Both holdings sources are unreachable right now. "
                         "Wait ~1 minute and press the button again - results are cached once loaded."
                     )
@@ -3017,11 +3245,11 @@ def main():
                         f" {n_two} stocks sit in two or more of your funds and {n_all} sit in all {len(etfs)}."
                         if len(etfs) > 1 else ""
                     )
-                    st.caption(
+                    cap(
                         f"Showing all {len(full)} blended underlying positions, weighted by your percentages. "
                         f"Top 10 stocks = {top10_weight:.1%} of the portfolio." + overlap_text
                     )
-                    st.caption(
+                    cap(
                         "Sources - "
                         + " | ".join(f"{ticker}: {info}" for ticker, info in source_counts.items())
                     )
@@ -3096,7 +3324,7 @@ def main():
                     final = final.dropna(axis=1, how="all")
 
                     st.dataframe(format_dataframe(final), hide_index=True)
-                    st.caption(
+                    cap(
                         "MY PORTFOLIO is weighted by your X-Ray percentages ("
                         + ", ".join(f"{t} {w:.0%}" for t, w in bench_weights.items())
                         + "). Each N-year CAGR is computed from the blended N-year total return, "
@@ -3128,13 +3356,14 @@ def main():
                         show_chart(fig)
 
                         if start_used is not None:
-                            st.caption(
+                            cap(
                                 f"Chart starts {start_used.date()}. Pre-inception eras use spliced "
-                                "same-index fund / index data; price-only index eras exclude dividends."
+                                "same-index fund / index data; price-only index eras exclude dividends. "
+                                "Dollar values are of their own time, not adjusted to today's dollars."
                             )
 
                     if skipped:
-                        st.caption(
+                        cap(
                             "Left off this chart because their history starts after the window: "
                             + ", ".join(skipped) + ". Pick a shorter window to include them."
                         )
@@ -3162,14 +3391,14 @@ def main():
                     final = final[[col for col in STATS_TABLE_COLS if col in final.columns]]
 
                     st.dataframe(format_dataframe(final), height=500, hide_index=True)
-                    st.caption(
+                    cap(
                         "Div CAGR uses completed calendar years. Where an ETF is younger than the "
                         "window, growth is chained from older same-index funds (see Hist Notes). "
                         "Max Div CAGR covers the longest unbroken yearly run available. "
                         "MY PORTFOLIO is weighted by your X-Ray percentages."
                     )
 
-                    st.markdown("### 💵 Payout history, per share")
+                    md("### 💵 Payout history, per share")
 
                     for ticker in t_list:
                         detail = dividend_detail(ticker)
@@ -3191,7 +3420,7 @@ def main():
                                 if detail.get("pay_date_yahoo")
                                 else "Yahoo does not publish ETF pay dates; they usually fall 2 to 7 days after the ex-date (the issuer's site has the exact day)."
                             )
-                            st.caption(f"Usual payout months: {detail['usual_months']}. {pay_note} Ex-date = the day you must already own shares to get that payout.")
+                            cap(f"Usual payout months: {detail['usual_months']}. {pay_note} Ex-date = the day you must already own shares to get that payout.")
 
     # --- TAB 4: DEEP DIVE ---
     with tab4:
@@ -3217,10 +3446,10 @@ def main():
                     )
 
                     if ticker in INDEX_NOTE:
-                        st.caption(INDEX_NOTE[ticker])
+                        cap(INDEX_NOTE[ticker])
 
                     if stats and stats.get("Hist Notes") not in (None, "-"):
-                        st.caption(f"History lineage: {stats['Hist Notes']}")
+                        cap(f"History lineage: {stats['Hist Notes']}")
 
                     if stats:
                         c1, c2, c3, c4 = st.columns(4)
@@ -3249,7 +3478,7 @@ def main():
                             e4.metric("Last 12 months / share", f"${detail['ttm']:.4f}")
                             note = f" Showing {detail['source']}'s record (same index) until {ticker} has a full year." if detail["source"] != ticker else ""
                             pay_note = f" Pay date per Yahoo: {detail['pay_date_yahoo']}." if detail.get("pay_date_yahoo") else " Pay date: usually 2 to 7 days after the ex-date (issuer site has the exact day)."
-                            st.caption(f"Usual payout months: {detail['usual_months']}.{pay_note}{note}")
+                            cap(f"Usual payout months: {detail['usual_months']}.{pay_note}{note}")
 
                     df, holdings_source = get_holdings(ticker)
 
@@ -3265,7 +3494,7 @@ def main():
                             lambda x: IND_MAP.get(x, "Diversified / Other")
                         )
 
-                        st.caption(f"{len(display_df)} holdings - source: {holdings_source}.")
+                        cap(f"{len(display_df)} holdings - source: {holdings_source}.")
                         st.dataframe(
                             display_df[["Symbol", "Industry", "Weight %"]],
                             height=400,
@@ -3275,7 +3504,7 @@ def main():
     # --- TAB 5: WATCHLIST (candidates vs my portfolio) ---
     with tab5:
         st.header("Watchlist: candidates vs. my portfolio")
-        st.caption(
+        cap(
             "Funds you might consider, lined up against a MY PORTFOLIO row built from your actual blend. "
             "A candidate earns a look only if it beats that row on the things that matter to you: "
             "long-run CAGR, cost, and worst drop."
@@ -3311,7 +3540,7 @@ def main():
     # --- TAB: COMPARE (side by side, metrics as rows) ---
     with tab_cmp:
         st.header("⚖️ Compare funds side by side")
-        st.caption(
+        cap(
             "Type two to four tickers. Metrics run down the page in plain words, funds run across, "
             "so it reads well on a phone. Your portfolio's four are the default; try QNDX, QQQ to see twins."
         )
@@ -3337,22 +3566,22 @@ def main():
                     st.warning("No usable data for those tickers right now. Wait a minute and press the button again.")
                 else:
                     if verdicts:
-                        st.markdown("### 🧭 The short version")
-                        st.markdown("\n\n".join(f"- {v}" for v in verdicts))
+                        md("### 🧭 The short version")
+                        md("\n\n".join(f"- {v}" for v in verdicts))
 
                     for title, df in sections:
-                        st.markdown(f"### {title}")
+                        md(f"### {title}")
                         st.dataframe(df, hide_index=True)
 
                     if overlaps:
-                        st.markdown("### 🔁 How much they overlap")
+                        md("### 🔁 How much they overlap")
                         st.dataframe(pd.DataFrame(overlaps), hide_index=True)
-                        st.caption(
+                        cap(
                             "\"Same stocks by weight\" adds up, stock by stock, the smaller of the two funds' "
                             "weights. 100% would mean identical portfolios."
                         )
 
-                    st.markdown("### 💰 Growth of $10,000")
+                    md("### 💰 Growth of $10,000")
                     years_map = {"5Y": 5, "10Y": 10, "15Y": 15, "20Y": 20, "Max common history": None}
                     growth_df, start_used, skipped = build_growth_frame(cmp_tickers[:6], years_map[cmp_window])
 
@@ -3367,21 +3596,21 @@ def main():
                         show_chart(fig)
 
                         if start_used is not None:
-                            st.caption(f"Chart starts {start_used.date()}. Log scale, so equal slopes mean equal growth rates.")
+                            cap(f"Chart starts {start_used.date()}. Log scale, so equal slopes mean equal growth rates.")
 
                     if skipped:
-                        st.caption("Left off the chart (history starts after the window): " + ", ".join(skipped) + ".")
+                        cap("Left off the chart (history starts after the window): " + ", ".join(skipped) + ".")
 
     # --- TAB: TAXES ---
     with tab_tax:
         st.header("🧾 Taxes: what each fund does to your tax bill")
-        st.caption(
+        cap(
             "General U.S. rules for 2026 in plain words, plus an estimate for your own blend. Not personal tax "
             "advice. The exact qualified share of any fund is on your M1 1099-DIV (box 1b) each year."
         )
 
         # --- Part 1: profile of any ticker ---
-        st.markdown("### 1. Look up any ticker")
+        md("### 1. Look up any ticker")
         tax_tickers = parse_tickers(st.text_input("Tickers:", DEFAULT_PORT, key="tax_tickers"))
 
         for ticker in tax_tickers[:8]:
@@ -3389,21 +3618,21 @@ def main():
             profile = TAX_PROFILES[key]
 
             with st.expander(f"{ticker} - {profile['name']}", expanded=len(tax_tickers) <= 4):
-                st.markdown(f"**What it pays you:** {profile['payouts']}")
-                st.markdown(f"**Tax on those payouts:** {profile['payout_tax']}")
-                st.markdown(f"**Capital-gain payouts from the fund:** {profile['gains_payouts']}")
-                st.markdown(f"**When you sell shares:** {profile['selling']}")
-                st.markdown(f"**Best account to hold it in:** {profile['best_home']}")
-                st.markdown("**Upsides:** " + "; ".join(profile["upsides"]) + ".")
-                st.markdown("**Downsides:** " + "; ".join(profile["downsides"]) + ".")
-                st.markdown(f"**On your tax forms:** {profile['form']}")
-                st.caption(f"Classified as: {how}.")
+                md(f"**What it pays you:** {profile['payouts']}")
+                md(f"**Tax on those payouts:** {profile['payout_tax']}")
+                md(f"**Capital-gain payouts from the fund:** {profile['gains_payouts']}")
+                md(f"**When you sell shares:** {profile['selling']}")
+                md(f"**Best account to hold it in:** {profile['best_home']}")
+                md("**Upsides:** " + "; ".join(profile["upsides"]) + ".")
+                md("**Downsides:** " + "; ".join(profile["downsides"]) + ".")
+                md(f"**On your tax forms:** {profile['form']}")
+                cap(f"Classified as: {how}.")
 
-        st.markdown("---")
+        md("---")
 
         # --- Part 2: blended estimate ---
-        st.markdown("### 2. Estimate for my blend")
-        st.caption(
+        md("### 2. Estimate for my blend")
+        cap(
             "Uses the X-Ray tickers and percentages. Only the share held in a taxable brokerage is taxed; "
             "the Roth share is $0 every year and $0 on qualified withdrawals."
         )
@@ -3440,7 +3669,7 @@ def main():
         rates = tax_rates(bracket, high_income, state_pct)
         taxable_share = taxable_pct / 100
 
-        st.caption(
+        cap(
             f"Rates used: qualified dividends and long-term gains {rates['qualified']:.1%}, "
             f"ordinary income {rates['ordinary']:.1%} (federal plus state)."
         )
@@ -3474,14 +3703,14 @@ def main():
                 m2.metric("Tax on them per year", f"${total_tax:,.0f}")
                 m3.metric("Tax drag on the portfolio", f"{drag:.2%} / yr")
 
-                st.markdown(
+                md(
                     f"With {taxable_pct}% of the money in taxable and {100 - taxable_pct}% in Roth, your funds' payouts "
                     f"cost about **${total_tax:,.0f} a year** in tax, which is **{drag:.2%}** of the portfolio.{expense_text} "
                     "Nothing else is taxed until you sell, and you never have to."
                 )
 
                 # Projection
-                st.markdown("#### If this grows for years")
+                md("#### If this grows for years")
                 blended_now, _ = calculate_blended_performance(tax_weights)
                 default_growth = blended_now.get("10Y CAGR")
                 growth_pct = st.number_input(
@@ -3489,31 +3718,40 @@ def main():
                     value=float(min(max(round((default_growth or 0.10) * 100, 1), 0.0), 40.0)), step=0.5, key="tax_growth",
                     help="Starts at your blend's 10-year growth rate. Yields and tax rates are held constant."
                 )
+                tax_inflation = st.number_input("Inflation assumption for 'today's dollars' (% per year):", min_value=0.0, max_value=10.0,
+                                                value=2.5, step=0.5, key="tax_inflation")
                 g = growth_pct / 100
+                infl = tax_inflation / 100
                 proj_rows = []
                 cumulative = 0.0
+                cumulative_today = 0.0
 
                 for year in range(1, 31):
                     value_t = tax_value * (1 + g) ** (year - 1)
-                    cumulative += value_t * drag
+                    tax_t = value_t * drag
+                    cumulative += tax_t
+                    cumulative_today += todays_dollars(tax_t, year, infl)
 
                     if year in (1, 5, 10, 20, 30):
+                        future_value = tax_value * (1 + g) ** year
                         proj_rows.append({
                             "After": f"{year} yr" if year == 1 else f"{year} yrs",
-                            "Portfolio value": f"${tax_value * (1 + g) ** year:,.0f}",
-                            "Tax paid on payouts so far": f"${cumulative:,.0f}",
+                            "Portfolio value (future dollars)": f"${future_value:,.0f}",
+                            "Portfolio value (today's dollars)": f"${todays_dollars(future_value, year, infl):,.0f}",
+                            "Tax paid on payouts so far (future dollars)": f"${cumulative:,.0f}",
+                            "Same tax in today's dollars": f"${cumulative_today:,.0f}",
                         })
 
                 st.dataframe(pd.DataFrame(proj_rows), hide_index=True)
-                st.caption(
+                cap(
                     "Assumes no new contributions, payouts reinvested, and today's yields, weights and tax rates "
-                    "throughout. It is a scale check, not a forecast."
+                    f"throughout. 'Today's dollars' removes {tax_inflation:.1f}% yearly inflation. It is a scale check, not a forecast."
                 )
 
-        st.markdown("---")
+        md("---")
 
         # --- Part 3: if you ever sold ---
-        st.markdown("### 3. If you ever sold")
+        md("### 3. If you ever sold")
         basis = st.number_input(
             "What you paid in total for the taxable shares ($, optional):", min_value=0, value=0, step=1000, key="tax_basis"
         )
@@ -3523,16 +3761,16 @@ def main():
             gain = taxable_value - basis
 
             if gain > 0:
-                st.markdown(
+                md(
                     f"Taxable-account value about **${taxable_value:,.0f}** on **${basis:,.0f}** paid in: gain of "
                     f"**${gain:,.0f}**. Sold after holding more than 1 year: about **${gain * rates['qualified']:,.0f}** "
                     f"in tax ({rates['qualified']:.1%}). Sold within a year: about **${gain * rates['ordinary']:,.0f}** "
                     f"({rates['ordinary']:.1%}). Roth shares: $0 on a qualified withdrawal."
                 )
             else:
-                st.markdown("No gain on those numbers, so no tax on a sale (a loss could offset other gains or up to $3,000 of income a year).")
+                md("No gain on those numbers, so no tax on a sale (a loss could offset other gains or up to $3,000 of income a year).")
 
-        st.markdown(
+        md(
             "Rules that matter for a weekly buyer: every purchase is its own lot with its own one-year clock; "
             "dividends on a lot are qualified once you have held it more than 60 days around the ex-dividend date, "
             "which a never-sell holder always meets; M1 sells specific lots in a set order when you do sell, so "
@@ -3570,12 +3808,12 @@ def main():
             st.info("Enter at least one ticker.")
         else:
             # --- Live market snapshot ---
-            st.markdown("### ⏱️ Market Pulse")
+            md("### ⏱️ Market Pulse")
 
             pulse_df, pulse_time = get_pulse(tickers_key)
 
             with top_r:
-                st.caption(
+                cap(
                     f"Snapshot loaded {pulse_time.astimezone().strftime('%Y-%m-%d %H:%M %Z')} - "
                     "auto-refreshes every 15 minutes when the app is opened or rerun."
                 )
@@ -3608,16 +3846,16 @@ def main():
                         callouts.append(f"**{row['Ticker']}** is " + ", ".join(bits) + ".")
 
                 if callouts:
-                    st.markdown("\n\n".join(callouts))
+                    md("\n\n".join(callouts))
 
-            st.markdown("---")
+            md("---")
 
             # --- Live headlines ---
-            st.markdown("### 🗞️ Latest Headlines")
+            md("### 🗞️ Latest Headlines")
 
             news_df, news_time = get_live_news(tickers_key)
 
-            st.caption(
+            cap(
                 f"Headlines fetched {news_time.astimezone().strftime('%Y-%m-%d %H:%M %Z')} "
                 "(Yahoo Finance + Google News). Auto-refreshes every 15 minutes."
             )
@@ -3638,14 +3876,14 @@ def main():
                     meta = " · ".join(x for x in [item["Ticker"], str(item["Source"]), age] if x)
 
                     if item["Link"]:
-                        st.markdown(f"**[{item['Title']}]({item['Link']})**  \n{meta}")
+                        md(f"**[{item['Title']}]({item['Link']})**  \n{meta}")
                     else:
-                        st.markdown(f"**{item['Title']}**  \n{meta}")
+                        md(f"**{item['Title']}**  \n{meta}")
 
-            st.markdown("---")
+            md("---")
 
             # --- Computed portfolio read ---
-            st.markdown("### 🧠 Portfolio Read (computed live)")
+            md("### 🧠 Portfolio Read (computed live)")
 
             read_weights = current_weights(insight_tickers)
             core_holdings, _counts = build_blended_holdings(insight_tickers, read_weights)
@@ -3665,12 +3903,12 @@ def main():
                     "count suggests."
                     if len(insight_tickers) > 1 else ""
                 )
-                st.markdown(
+                md(
                     f"Blending {mix} gives you {n_unique} underlying stocks. The top 3 ({top3_names}) are an "
                     f"estimated **{top3_weight:.1%}** of the portfolio and the top 10 are **{top10_weight:.1%}**. "
                     f"**{top1['Symbol']}** alone is ~**{top1['Weight']:.1%}**." + overlap_text
                 )
-                st.caption(
+                cap(
                     "Computed from each fund's published holdings (full basket where available): "
                     + " | ".join(f"{t}: {info}" for t, info in _counts.items())
                 )
@@ -3682,10 +3920,10 @@ def main():
             else:
                 st.info("Holdings overlap unavailable right now (rate-limited) - press Refresh now to retry.")
 
-            st.markdown("---")
+            md("---")
 
             # --- AI prompt with live numbers (changes every day) ---
-            st.markdown("### 🤖 1-Click Claude Intelligence Prompt")
+            md("### 🤖 1-Click Claude Intelligence Prompt")
 
             pulse_bits = []
 
@@ -3707,8 +3945,8 @@ def main():
             st.code(prompt_text, language="text")
 
             claude_url = "https://claude.ai/new?q=" + urllib.parse.quote(prompt_text)
-            st.markdown(f"[🔗 Open in Claude (prompt pre-filled)]({claude_url})")
-            st.caption(
+            md(f"[🔗 Open in Claude (prompt pre-filled)]({claude_url})")
+            cap(
                 "Prompt embeds today's live numbers, so it changes every day. "
                 "The link opens Claude with the prompt ready to send - or copy the box above."
             )
@@ -3716,7 +3954,7 @@ def main():
     # --- TAB 7: SHOWS & VOICES ---
     with tab7:
         st.header("🎧 Shows & Voices")
-        st.caption(
+        cap(
             "Newest episodes and videos from the shows you follow. Refreshes every 30 minutes. "
             "To add a show, tell Claude the name or paste its YouTube link."
         )
@@ -3727,7 +3965,7 @@ def main():
 
         shows_df, show_status, shows_time = get_show_items(tuple(SHOW_FEEDS))
 
-        st.caption(
+        cap(
             f"Fetched {shows_time.astimezone().strftime('%Y-%m-%d %H:%M %Z')} - "
             + " | ".join(f"{name}: {state}" for name, state in show_status.items())
         )
@@ -3749,25 +3987,25 @@ def main():
                 meta = " · ".join(x for x in [str(item["Show"]), age] if x)
 
                 if item["Link"]:
-                    st.markdown(f"**[{item['Title']}]({item['Link']})**  \n{meta}")
+                    md(f"**[{item['Title']}]({item['Link']})**  \n{meta}")
                 else:
-                    st.markdown(f"**{item['Title']}**  \n{meta}")
+                    md(f"**{item['Title']}**  \n{meta}")
 
             videos = shows_df[shows_df["VideoId"].notna()]
 
             if not videos.empty:
-                st.markdown("---")
-                st.markdown("### ▶️ Watch here")
+                md("---")
+                md("### ▶️ Watch here")
 
                 channels = videos.drop_duplicates(subset=["Show"])["Show"].tolist()
                 watch_pick = st.selectbox("Latest video from:", channels, key="watch_pick")
                 latest = videos[videos["Show"] == watch_pick].iloc[0]
 
-                st.markdown(f"**{latest['Title']}**")
+                md(f"**{latest['Title']}**")
                 st.video(f"https://www.youtube.com/watch?v={latest['VideoId']}")
 
-    st.markdown("---")
-    st.caption(
+    md("---")
+    cap(
         f"Master Portfolio v{APP_VERSION}. Data: Yahoo Finance via yfinance (free, ~15-min delayed quotes). "
         "Prices cached 15 min, full history 6h, holdings 12h, shows 30 min. Long-period returns use "
         "index-extended history - see Hist Notes."
