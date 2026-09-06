@@ -19,14 +19,15 @@ import plotly.express as px
 st.set_page_config(page_title="Master Portfolio", page_icon="📊", layout="wide")
 st.title("📊 Master Portfolio: Light Rios Edition")
 
-APP_VERSION = "2.0 (Sep 5, 2026)"
+APP_VERSION = "2.1 (Sep 5, 2026)"
 
 # Your actual portfolio. Every tab starts with these tickers at these percentages.
 DEFAULT_PORT = "SPMO, QNDX, FTEC, SMH"
 DEFAULT_WEIGHTS = {"SPMO": 25, "QNDX": 25, "FTEC": 25, "SMH": 25}
 DEFAULT_BENCH = "VOO, QQQ"
 # Watchlist = funds you might consider, shown next to a "MY PORTFOLIO" comparison row.
-DEFAULT_WATCH = "QQQM, SCHG, VUG, XLK, SOXX, IYW"
+# QQQ and VGT are the higher-fee twins of QNDX and FTEC, kept here for side-by-side checks.
+DEFAULT_WATCH = "QQQ, VGT, QQQM, SCHG, VUG, XLK"
 
 ALL_NUM_COLS = [
     "Yield (TTM)", "Yield (Fwd)", "1D", "1W", "1M", "YTD",
@@ -74,7 +75,9 @@ EXTEND_CHAIN = {
 INDEX_NOTE = {
     "QQQ":  "Tracks the Nasdaq-100. Extended with ^XNDX (total return) and ^NDX (price-only, index since 1985).",
     "QQQM": "Tracks the Nasdaq-100. Extended with QQQ, then Nasdaq-100 index history.",
-    "QNDX": "Tracks the Nasdaq-100. Extended with QQQ, then Nasdaq-100 index history.",
+    "QNDX": "State Street SPDR Portfolio Nasdaq-100 ETF (launched Jun 23, 2026, 0.10%/yr). Tracks the same "
+            "Nasdaq-100 Index as QQQ, so everything before its launch is QQQ's history and, before 1999, "
+            "the index itself. Holdings and dividend figures borrow QQQ's until the fund has its own.",
     "SPMO": "Tracks the S&P 500 Momentum Index (about 100 S&P 500 stocks with the strongest recent "
             "price momentum, rebalanced twice a year). Fund launched Oct 9, 2015; there is no older fund "
             "on the same index, so its history is NOT extended - 15Y/20Y figures are blank on purpose.",
@@ -124,13 +127,13 @@ B_INCEPT = {
     "SPY": "1993-01-22", "VGT": "2004-01-26", "VYM": "2006-11-10",
     "SCHD": "2011-10-20", "VIG": "2006-04-21", "JEPQ": "2022-05-03",
     "SOXX": "2001-07-10", "IYW": "2000-05-15", "VUG": "2004-01-26",
-    "IVV": "2000-05-15", "VTI": "2001-05-24", "SPMO": "2015-10-09"
+    "IVV": "2000-05-15", "VTI": "2001-05-24", "SPMO": "2015-10-09", "QNDX": "2026-06-23"
 }
 
 # Verified annual expense ratios (as a fraction: 0.0013 = 0.13% per year).
 # Anything not listed here is looked up from Yahoo Finance at run time.
 EXPENSE_RATIO = {
-    "SPMO": 0.0013, "QQQ": 0.0020, "QQQM": 0.0015, "VGT": 0.0009, "SMH": 0.0035,
+    "SPMO": 0.0013, "QQQ": 0.0020, "QQQM": 0.0015, "QNDX": 0.0010, "VGT": 0.0009, "SMH": 0.0035,
     "VOO": 0.0003, "VTI": 0.0003,
 }
 
@@ -879,9 +882,28 @@ def get_full_stats(ticker):
     if price <= 0:
         return None
 
-    if not div.empty:
+    # A fund younger than a year has no full year of payouts yet. Borrow the dividend record
+    # (and matching price) of the older same-index fund so yield, streak and frequency are real.
+    div_price = price
+    div_proxy = None
+    own_days = (own_close.index[-1] - own_close.index[0]).days
+
+    if own_days < 365:
+        for symbol, kind in EXTEND_CHAIN.get(ticker, []):
+            if kind != "fund":
+                continue
+
+            proxy_close, proxy_div = get_history_bundle(symbol)
+
+            if not proxy_close.empty and not proxy_div.empty:
+                div = proxy_div
+                div_price = float(proxy_close.iloc[-1])
+                div_proxy = symbol
+                break
+
+    if not div.empty and div_price > 0:
         cutoff = pd.Timestamp.now() - pd.Timedelta(days=365)
-        y_ttm = float(div[div.index >= cutoff].sum()) / price
+        y_ttm = float(div[div.index >= cutoff].sum()) / div_price
     else:
         y_ttm = 0.0
 
@@ -978,6 +1000,9 @@ def get_full_stats(ticker):
     if div_proxies:
         notes.append(f"div growth pre-{ticker} via {'/'.join(div_proxies)}")
 
+    if div_proxy:
+        notes.append(f"yield/streak/freq via {div_proxy} (fund younger than 1 year)")
+
     if div_run:
         notes.append(f"max div span {div_run}y")
 
@@ -1053,9 +1078,28 @@ def get_holdings(ticker):
         return empty, "none"
 
     try:
-        return _holdings_cached(ticker)
+        own_df, own_source = _holdings_cached(ticker)
     except Exception:
-        return empty, "unavailable"
+        own_df, own_source = empty, "unavailable"
+
+    if own_source.startswith("full basket"):
+        return own_df, own_source
+
+    # Only a top-10 list (or nothing) for this fund. If an older fund tracks the same index
+    # and we have its full basket, that basket is a far better picture than 10 names.
+    for symbol, kind in EXTEND_CHAIN.get(ticker, []):
+        if kind != "fund":
+            continue
+
+        try:
+            proxy_df, proxy_source = _holdings_cached(symbol)
+        except Exception:
+            continue
+
+        if proxy_source.startswith("full basket") and not proxy_df.empty:
+            return proxy_df, f"{symbol}'s {proxy_source} used as same-index stand-in"
+
+    return own_df, own_source
 
 
 def get_stats_for_tickers(tickers):
@@ -1873,10 +1917,13 @@ def main():
                     n_unique, n_two, n_all = holdings_overlap(etfs)
                     top10_weight = full.head(10)["Weight"].sum()
 
+                    overlap_text = (
+                        f" {n_two} stocks sit in two or more of your funds and {n_all} sit in all {len(etfs)}."
+                        if len(etfs) > 1 else ""
+                    )
                     st.caption(
                         f"Showing all {len(full)} blended underlying positions, weighted by your percentages. "
-                        f"Top 10 stocks = {top10_weight:.1%} of the portfolio. "
-                        f"{n_two} stocks sit in two or more of your funds and {n_all} sit in all {len(etfs)}."
+                        f"Top 10 stocks = {top10_weight:.1%} of the portfolio." + overlap_text
                     )
                     st.caption(
                         "Sources - "
@@ -2245,13 +2292,16 @@ def main():
                 n_unique, n_two, n_all = holdings_overlap(insight_tickers)
                 mix = ", ".join(f"{t} {w:.0%}" for t, w in read_weights.items())
 
+                overlap_text = (
+                    f" {n_two} stocks appear in two or more of your funds and {n_all} appear in all "
+                    f"{len(insight_tickers)}, which is why these funds move together more than the fund "
+                    "count suggests."
+                    if len(insight_tickers) > 1 else ""
+                )
                 st.markdown(
                     f"Blending {mix} gives you {n_unique} underlying stocks. The top 3 ({top3_names}) are an "
                     f"estimated **{top3_weight:.1%}** of the portfolio and the top 10 are **{top10_weight:.1%}**. "
-                    f"**{top1['Symbol']}** alone is ~**{top1['Weight']:.1%}**. "
-                    f"{n_two} stocks appear in two or more of your funds and {n_all} appear in all "
-                    f"{len(insight_tickers)}, which is why these funds move together more than the fund "
-                    "count suggests."
+                    f"**{top1['Symbol']}** alone is ~**{top1['Weight']:.1%}**." + overlap_text
                 )
                 st.caption(
                     "Computed from each fund's published holdings (full basket where available): "
