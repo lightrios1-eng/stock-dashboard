@@ -19,7 +19,7 @@ import plotly.express as px
 st.set_page_config(page_title="Master Portfolio", page_icon="📊", layout="wide")
 st.title("📊 Master Portfolio: Light Rios Edition")
 
-APP_VERSION = "2.1 (Sep 5, 2026)"
+APP_VERSION = "2.2 (Sep 5, 2026)"
 
 # Your actual portfolio. Every tab starts with these tickers at these percentages.
 DEFAULT_PORT = "SPMO, QNDX, FTEC, SMH"
@@ -1604,6 +1604,496 @@ STATS_TABLE_COLS = (
 )
 
 
+# --- TAX PROFILES (general U.S. tax rules for 2026; education, not personal tax advice) ---
+# The exact "qualified" share of any fund's payouts is published by its issuer every January and
+# shows up on your own 1099-DIV (box 1b). The shares below are typical values used for estimates.
+TAX_PROFILES = {
+    "us_equity_index": {
+        "name": "U.S. stock index ETF",
+        "qualified_share": 0.95,
+        "payouts": "Dividends, and essentially all of them are qualified (issuers report 95% to 100% each January).",
+        "payout_tax": "Qualified dividends: 0%, 15% or 20% federal depending on your bracket, plus 3.8% only if income is above $200k single / $250k married.",
+        "gains_payouts": "Capital-gains payouts are rare. ETFs hand appreciated stock to market makers instead of selling it, so they almost never pass gains to you.",
+        "selling": "Shares held more than 1 year: long-term rate (0% / 15% / 20%). One year or less: your ordinary bracket. Each weekly buy is its own lot with its own one-year clock.",
+        "best_home": "Works in both Roth and taxable. A low-yield growth index fund is about the most tax-efficient thing you can hold in a taxable account.",
+        "upsides": ["Little annual tax because the yield is low", "The big tax bill is deferred until you sell, and you never have to sell", "Heirs receive a stepped-up basis"],
+        "downsides": ["Large built-in gains make switching funds later expensive (lock-in)", "Dividends are taxed every year even when reinvested"],
+        "form": "1099-DIV: box 1a total dividends, box 1b the qualified part (most of 1a), box 2a capital-gain payouts (usually 0).",
+    },
+    "us_dividend_equity": {
+        "name": "U.S. dividend-focused stock ETF",
+        "qualified_share": 0.95,
+        "payouts": "Dividends, mostly qualified, but two to four times more of them per dollar than a growth index fund.",
+        "payout_tax": "Qualified dividends: 0%, 15% or 20% federal depending on your bracket, plus 3.8% only if income is above $200k single / $250k married.",
+        "gains_payouts": "Rare, same in-kind mechanism as any stock ETF.",
+        "selling": "More than 1 year: long-term rate. One year or less: ordinary bracket.",
+        "best_home": "Fine in either account. In taxable, the higher yield means a bigger yearly tax bill than a growth fund would create.",
+        "upsides": ["Qualified treatment", "Steady cash if you ever want income"],
+        "downsides": ["More tax every year than a low-yield fund", "Income you did not need still gets taxed"],
+        "form": "1099-DIV boxes 1a and 1b.",
+    },
+    "international_equity": {
+        "name": "International stock ETF",
+        "qualified_share": 0.70,
+        "payouts": "Dividends, roughly 60% to 80% qualified depending on the countries inside. Foreign governments withhold tax before you see the money.",
+        "payout_tax": "Qualified part at 0/15/20%, the rest at your ordinary bracket. You can claim the foreign tax withheld as a credit (Form 1116, or directly if it is $300 or less single / $600 married).",
+        "gains_payouts": "Rare.",
+        "selling": "More than 1 year: long-term rate. One year or less: ordinary bracket.",
+        "best_home": "Taxable is usually better than Roth: inside a Roth the foreign tax withheld is simply lost, in taxable you get it back as a credit.",
+        "upsides": ["Foreign tax credit recovers most withholding", "Diversification away from U.S. tax law changes"],
+        "downsides": ["Lower qualified share", "Extra tax-form work"],
+        "form": "1099-DIV boxes 1a, 1b and box 7 (foreign tax paid).",
+    },
+    "covered_call": {
+        "name": "Covered-call / option-income ETF",
+        "qualified_share": 0.10,
+        "payouts": "Big monthly payouts (often 8% to 12% a year) made mostly of option premium. For JEPI/JEPQ that is ordinary income; for QYLD-style funds much of it is return of capital, which is not taxed now but lowers your cost basis.",
+        "payout_tax": "Mostly your ordinary bracket, not the qualified rate. Return-of-capital pieces are deferred until you sell.",
+        "gains_payouts": "Possible; the option activity can create short-term gains.",
+        "selling": "More than 1 year: long-term rate on the gain (a larger gain if return of capital lowered your basis).",
+        "best_home": "Roth or IRA only, if at all. In a taxable account the yearly tax drag can exceed 3% of the position.",
+        "upsides": ["High cash yield", "Lower volatility than the plain index"],
+        "downsides": ["Caps the upside you are investing for", "Worst tax profile of any stock fund in taxable", "Return of capital hides the true tax bill until sale"],
+        "form": "1099-DIV box 1a (mostly not in 1b), box 3 (nondividend distributions = return of capital).",
+    },
+    "reit": {
+        "name": "Real estate (REIT) fund or stock",
+        "qualified_share": 0.05,
+        "payouts": "Large dividends that are NOT qualified. A portion is return of capital and a small piece can be capital gain.",
+        "payout_tax": "Ordinary bracket, but with the 20% Section 199A deduction (made permanent in 2025), so effectively 80% of your ordinary rate.",
+        "gains_payouts": "Some, from property sales inside the fund.",
+        "selling": "More than 1 year: long-term rate.",
+        "best_home": "Roth or IRA. In taxable, most of the payout is taxed at your working-income rate.",
+        "upsides": ["199A deduction softens the blow", "Real income stream"],
+        "downsides": ["No qualified treatment", "Return of capital lowers basis and grows the eventual gain"],
+        "form": "1099-DIV box 1a, box 5 (Section 199A dividends), box 3 (return of capital), box 2a.",
+    },
+    "taxable_bond": {
+        "name": "Bond ETF (corporate / total bond market)",
+        "qualified_share": 0.0,
+        "payouts": "Monthly interest. None of it is qualified.",
+        "payout_tax": "Ordinary bracket, federal and state.",
+        "gains_payouts": "Occasional small ones.",
+        "selling": "Long-term or short-term rate on any price gain; bonds usually have little.",
+        "best_home": "Roth or IRA. Interest at ordinary rates is the classic thing to shelter.",
+        "upsides": ["Predictable cash", "Lower volatility"],
+        "downsides": ["Ordinary rates on everything", "Fully taxed by states that have an income tax"],
+        "form": "1099-DIV box 1a (interest from a bond ETF still arrives as an ordinary dividend), box 1b is 0.",
+    },
+    "treasury": {
+        "name": "U.S. Treasury / T-bill ETF",
+        "qualified_share": 0.0,
+        "payouts": "Interest from U.S. government debt. Not qualified.",
+        "payout_tax": "Ordinary federal bracket, but exempt from state income tax (the fund reports the government-interest share each January).",
+        "gains_payouts": "Rare.",
+        "selling": "Long-term or short-term rate on any price gain; T-bill funds have almost none.",
+        "best_home": "Either. If your state rate is 0% anyway there is no state advantage to capture.",
+        "upsides": ["State-tax exempt", "Safest cash-like holding"],
+        "downsides": ["Ordinary federal rate on the interest"],
+        "form": "1099-DIV box 1a; the issuer's January letter tells you the state-exempt percentage.",
+    },
+    "muni_bond": {
+        "name": "Municipal bond ETF",
+        "qualified_share": 0.0,
+        "payouts": "Interest that is exempt from federal income tax. Exempt from state tax only for bonds from your own state.",
+        "payout_tax": "0% federal. Your state may tax the out-of-state portion.",
+        "gains_payouts": "Rare, and those are taxable.",
+        "selling": "Price gains are taxed normally; only the interest is exempt.",
+        "best_home": "Taxable only. Never inside a Roth or IRA (you would give up the exemption for nothing).",
+        "upsides": ["Federal tax-free income"],
+        "downsides": ["Lower yield than taxable bonds; only worth it in higher brackets", "Some interest can count for the alternative minimum tax"],
+        "form": "1099-DIV box 12 (exempt-interest dividends).",
+    },
+    "gold_physical": {
+        "name": "Physical gold / silver ETF (trust)",
+        "qualified_share": 0.0,
+        "payouts": "None. (Tiny amounts may be reported for fees the trust pays by selling metal.)",
+        "payout_tax": "Nothing yearly.",
+        "gains_payouts": "None.",
+        "selling": "Taxed as a collectible: up to 28% federal on gains held more than 1 year (not the 15%/20% stock rate). One year or less: ordinary bracket.",
+        "best_home": "Roth or IRA, which avoids the 28% collectibles rate entirely.",
+        "upsides": ["No annual tax at all", "Simple 1099-B on sale"],
+        "downsides": ["28% maximum long-term rate instead of 20%", "Yearly grantor-trust statement to keep for basis"],
+        "form": "1099-B on sale plus the trust's annual tax letter.",
+    },
+    "commodity_futures": {
+        "name": "Commodity futures ETF (partnership)",
+        "qualified_share": 0.0,
+        "payouts": "Usually none, but you are taxed anyway.",
+        "payout_tax": "Futures are marked to market every December 31: 60% of the gain is long-term and 40% short-term whether or not you sold. Reported on a Schedule K-1 that arrives in March.",
+        "gains_payouts": "Not applicable; gains flow through on the K-1.",
+        "selling": "60/40 treatment again on sale.",
+        "best_home": "Avoid in taxable unless you accept K-1 filing every year. In an IRA, large positions can trigger unrelated business income tax forms.",
+        "upsides": ["60/40 rule is favorable versus pure short-term"],
+        "downsides": ["K-1 paperwork, late arrival, sometimes state filings", "Taxed on paper gains you never received"],
+        "form": "Schedule K-1 (Form 1065).",
+    },
+    "leveraged_inverse": {
+        "name": "Leveraged or inverse ETF",
+        "qualified_share": 0.50,
+        "payouts": "Irregular; can include short-term gains from the daily rebalancing.",
+        "payout_tax": "Mixed: any qualified part at 0/15/20%, short-term pieces at your ordinary bracket.",
+        "gains_payouts": "More likely than a plain index fund.",
+        "selling": "Normal long-term / short-term rules on the shares.",
+        "best_home": "Roth or IRA if held at all; these funds reset daily and are designed for short holds.",
+        "upsides": ["Standard share-sale treatment", "No K-1 for the common equity ones (TQQQ, SOXL, UPRO)"],
+        "downsides": ["Daily reset makes multi-year results unpredictable (volatility decay)", "Payouts can be short-term gains"],
+        "form": "1099-DIV boxes 1a, 1b, 2a.",
+    },
+    "us_stock": {
+        "name": "Individual U.S. stock",
+        "qualified_share": 0.95,
+        "payouts": "Dividends from a U.S. corporation are qualified if you hold the shares more than 60 days in the 121-day window around each ex-dividend date. A never-sell holder meets that automatically.",
+        "payout_tax": "Qualified: 0/15/20% federal, plus 3.8% only above the high-income line.",
+        "gains_payouts": "Not applicable.",
+        "selling": "More than 1 year: long-term rate. One year or less: ordinary bracket.",
+        "best_home": "Either.",
+        "upsides": ["Qualified dividends", "You control exactly when gains are realized"],
+        "downsides": ["Single-company risk", "Special dividends and spin-offs can complicate basis"],
+        "form": "1099-DIV boxes 1a and 1b; 1099-B on sale.",
+    },
+    "foreign_stock": {
+        "name": "Foreign stock / ADR",
+        "qualified_share": 0.80,
+        "payouts": "Dividends, qualified only if the company's country has a tax treaty with the U.S. (or the stock trades on a U.S. exchange). Foreign tax is withheld first.",
+        "payout_tax": "Qualified part at 0/15/20%; foreign withholding recoverable as a credit in a taxable account.",
+        "gains_payouts": "Not applicable.",
+        "selling": "Normal long-term / short-term rules.",
+        "best_home": "Taxable, to keep the foreign tax credit.",
+        "upsides": ["Credit for foreign tax", "Usually qualified"],
+        "downsides": ["Withholding is lost inside a Roth", "Treaty details vary by country"],
+        "form": "1099-DIV boxes 1a, 1b, 7.",
+    },
+    "mlp": {
+        "name": "Master limited partnership (MLP)",
+        "qualified_share": 0.0,
+        "payouts": "Quarterly distributions that are mostly return of capital (not taxed now, lowers your basis).",
+        "payout_tax": "Reported on a Schedule K-1; the taxable slice is ordinary income.",
+        "gains_payouts": "Not applicable.",
+        "selling": "Part of the gain is recaptured as ordinary income.",
+        "best_home": "Taxable. Inside an IRA, more than $1,000 of partnership income triggers a separate tax return for the account.",
+        "upsides": ["Tax-deferred cash flow"],
+        "downsides": ["K-1 every year", "Ordinary-income recapture on sale"],
+        "form": "Schedule K-1.",
+    },
+}
+
+# Known funds. Anything not listed is classified from Yahoo's category text (see tax_profile_key).
+TAX_OVERRIDES = {
+    "SPMO": "us_equity_index", "QNDX": "us_equity_index", "QQQ": "us_equity_index", "QQQM": "us_equity_index",
+    "FTEC": "us_equity_index", "VGT": "us_equity_index", "SMH": "us_equity_index", "SOXX": "us_equity_index",
+    "XLK": "us_equity_index", "IYW": "us_equity_index", "VOO": "us_equity_index", "SPY": "us_equity_index",
+    "IVV": "us_equity_index", "SPLG": "us_equity_index", "VTI": "us_equity_index", "ITOT": "us_equity_index",
+    "SCHG": "us_equity_index", "VUG": "us_equity_index", "MGK": "us_equity_index", "IWF": "us_equity_index",
+    "SCHD": "us_dividend_equity", "VYM": "us_dividend_equity", "VIG": "us_dividend_equity", "DGRO": "us_dividend_equity",
+    "JEPQ": "covered_call", "JEPI": "covered_call", "QYLD": "covered_call", "XYLD": "covered_call",
+    "VNQ": "reit", "SCHH": "reit", "XLRE": "reit", "IYR": "reit",
+    "BND": "taxable_bond", "AGG": "taxable_bond", "LQD": "taxable_bond", "BNDX": "taxable_bond",
+    "TLT": "treasury", "IEF": "treasury", "SHY": "treasury", "SGOV": "treasury", "BIL": "treasury", "VGSH": "treasury",
+    "MUB": "muni_bond", "VTEB": "muni_bond",
+    "GLD": "gold_physical", "IAU": "gold_physical", "GLDM": "gold_physical", "SGOL": "gold_physical", "SLV": "gold_physical",
+    "USO": "commodity_futures", "DBC": "commodity_futures", "UNG": "commodity_futures",
+    "TQQQ": "leveraged_inverse", "SOXL": "leveraged_inverse", "UPRO": "leveraged_inverse", "SQQQ": "leveraged_inverse",
+    "VXUS": "international_equity", "IXUS": "international_equity", "VEA": "international_equity",
+    "VWO": "international_equity", "EFA": "international_equity", "EEM": "international_equity",
+    "IXN": "international_equity", "VT": "international_equity", "ACWI": "international_equity",
+}
+
+INTERNATIONAL_WORDS = ["foreign", "world", "emerging", "global", "europe", "pacific", "china", "japan", "india", "international", "ex-us", "ex us"]
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def tax_profile_key(ticker):
+    """Which tax profile fits this ticker. Returns (profile_key, how_it_was_decided)."""
+    ticker = ticker.strip().upper()
+
+    if ticker in TAX_OVERRIDES:
+        return TAX_OVERRIDES[ticker], "known fund"
+
+    info = get_info(ticker)
+    quote_type = str(info.get("quoteType", "")).upper()
+    category = str(info.get("category") or "").lower()
+    name = str(info.get("longName") or info.get("shortName") or "").lower()
+    text = category + " " + name
+
+    if quote_type == "EQUITY":
+        industry = str(info.get("industry") or "").lower()
+        country = str(info.get("country") or "").lower()
+
+        if "reit" in industry or "reit" in name:
+            return "reit", "individual REIT"
+
+        if "midstream" in industry and (" lp" in name or "l.p." in name or "partners" in name):
+            return "mlp", "partnership"
+
+        if country and country != "united states":
+            return "foreign_stock", f"company based in {info.get('country')}"
+
+        return "us_stock", "U.S. company"
+
+    if "derivative income" in category or "covered call" in text or "buywrite" in text or "premium income" in text:
+        return "covered_call", f"Yahoo category: {category or 'n/a'}"
+
+    if "real estate" in category or "reit" in text:
+        return "reit", f"Yahoo category: {category or 'n/a'}"
+
+    if "muni" in text:
+        return "muni_bond", f"Yahoo category: {category or 'n/a'}"
+
+    if "treasury" in text or "government" in category or "t-bill" in text:
+        return "treasury", f"Yahoo category: {category or 'n/a'}"
+
+    if "bond" in category or "fixed income" in text or "core-plus" in category:
+        return "taxable_bond", f"Yahoo category: {category or 'n/a'}"
+
+    if "leveraged" in category or "inverse" in category or "trading--" in category:
+        return "leveraged_inverse", f"Yahoo category: {category or 'n/a'}"
+
+    if "commodit" in category or "commodit" in name:
+        if any(word in text for word in ["gold", "silver", "precious", "platinum"]):
+            return "gold_physical", f"Yahoo category: {category or 'n/a'}"
+
+        return "commodity_futures", f"Yahoo category: {category or 'n/a'}"
+
+    if any(word in category for word in INTERNATIONAL_WORDS):
+        return "international_equity", f"Yahoo category: {category or 'n/a'}"
+
+    if "dividend" in text or "high yield" in text or "income" in category:
+        return "us_dividend_equity", f"Yahoo category: {category or 'n/a'}"
+
+    return "us_equity_index", f"Yahoo category: {category or 'n/a'}"
+
+
+def tax_rates(bracket_pct, high_income, state_pct):
+    """Federal + state rates as fractions. Qualified/long-term: 0% in the 10-12% brackets,
+    15% in 22-35%, 20% in 37%. The 3.8% net investment income tax applies above $200k single /
+    $250k married."""
+    qualified = 0.0 if bracket_pct <= 12 else (0.20 if bracket_pct >= 37 else 0.15)
+    niit = 0.038 if high_income else 0.0
+    state = max(float(state_pct), 0.0) / 100
+
+    return {
+        "ordinary": bracket_pct / 100 + niit + state,
+        "qualified": qualified + niit + state,
+        "ordinary_fed": bracket_pct / 100 + niit,
+        "qualified_fed": qualified + niit,
+        "state": state,
+    }
+
+
+def payout_tax_rate(profile_key, rates):
+    """Effective tax rate on one dollar of payouts from this kind of holding."""
+    profile = TAX_PROFILES[profile_key]
+    q = profile["qualified_share"]
+
+    if profile_key == "muni_bond":
+        return rates["state"]
+
+    if profile_key == "treasury":
+        return rates["ordinary_fed"]
+
+    if profile_key == "gold_physical":
+        return 0.0
+
+    if profile_key == "reit":
+        return q * rates["qualified"] + (1 - q) * (rates["ordinary_fed"] * 0.8 + rates["state"])
+
+    return q * rates["qualified"] + (1 - q) * rates["ordinary"]
+
+
+def blended_tax_estimate(tickers, weights, value, taxable_share, rates):
+    """Per-fund and total yearly tax on payouts. Only the taxable-account share is taxed."""
+    rows = []
+    total_payout = 0.0
+    total_tax = 0.0
+
+    for ticker in tickers:
+        weight = weights.get(ticker, 0)
+
+        if weight <= 0:
+            continue
+
+        stats = get_full_stats(ticker)
+        yield_ttm = (stats or {}).get("Yield (TTM)") or 0.0
+        key, _ = tax_profile_key(ticker)
+        rate = payout_tax_rate(key, rates)
+        payout = value * weight * yield_ttm
+        tax = payout * taxable_share * rate
+
+        total_payout += payout
+        total_tax += tax
+
+        rows.append({
+            "Fund": ticker,
+            "Weight": f"{weight:.0%}",
+            "Yield (TTM)": f"{yield_ttm:.2%}",
+            "Payout type": TAX_PROFILES[key]["name"],
+            "Payouts / yr": f"${payout:,.0f}",
+            "Tax rate on payouts": f"{rate:.1%}",
+            "Tax / yr (taxable part)": f"${tax:,.0f}",
+        })
+
+    return rows, total_payout, total_tax
+
+
+def holdings_overlap_pct(df_a, df_b):
+    """Share of the two funds that is the same stocks (sum of the smaller weight per shared stock)."""
+    if df_a.empty or df_b.empty:
+        return None
+
+    a = merge_goog(df_a.rename(columns={"Raw_Weight": "Weight"}))
+    b = merge_goog(df_b.rename(columns={"Raw_Weight": "Weight"}))
+    a_w = dict(zip(a["Symbol"], a["Weight"] / a["Weight"].sum()))
+    b_w = dict(zip(b["Symbol"], b["Weight"] / b["Weight"].sum()))
+
+    return sum(min(a_w[s], b_w[s]) for s in a_w if s in b_w)
+
+
+def describe_fund(ticker, info):
+    if ticker in INDEX_NOTE:
+        return INDEX_NOTE[ticker].split(". ")[0] + "."
+
+    return IND_MAP.get(ticker) or info.get("category") or info.get("longName") or "-"
+
+
+def compare_sections(tickers):
+    """Side-by-side tables (metrics as rows, funds as columns) plus computed one-line verdicts."""
+    stats = {}
+    holdings = {}
+
+    for ticker in tickers:
+        s = get_full_stats(ticker)
+
+        if s:
+            stats[ticker] = s
+            holdings[ticker] = get_holdings(ticker)
+
+    if not stats:
+        return None, [], []
+
+    def pct(v):
+        return pct_or_na(v) if v is not None and pd.notnull(v) else "-"
+
+    def top3(ticker):
+        df, _ = holdings[ticker]
+
+        if df.empty:
+            return "-"
+
+        top = merge_goog(df.rename(columns={"Raw_Weight": "Weight"})).head(3)
+        return ", ".join(f"{r.Symbol} {r.Weight:.1%}" for r in top.itertuples())
+
+    def top10(ticker):
+        df, _ = holdings[ticker]
+
+        if df.empty:
+            return "-"
+
+        top = merge_goog(df.rename(columns={"Raw_Weight": "Weight"})).head(10)
+        return f"{top['Weight'].sum():.1%}"
+
+    cols = list(stats.keys())
+    sections = []
+
+    what = {
+        "What it holds": {t: describe_fund(t, get_info(t)) for t in cols},
+        "Fund since": {t: stats[t]["Inception"] for t in cols},
+        "History used from": {t: stats[t]["Hist From"] for t in cols},
+        "Cost per year": {t: pct(stats[t].get("Expense")) for t in cols},
+        "Number of holdings": {t: (len(holdings[t][0]) if not holdings[t][0].empty else "-") for t in cols},
+        "Top 3 holdings": {t: top3(t) for t in cols},
+        "Top 10 share": {t: top10(t) for t in cols},
+        "Price": {t: f"${stats[t]['Price']:.2f}" for t in cols},
+    }
+    growth = {
+        "1 year": {t: pct(stats[t].get("1Y Total")) for t in cols},
+        "3 years (per year)": {t: pct(stats[t].get("3Y CAGR")) for t in cols},
+        "5 years (per year)": {t: pct(stats[t].get("5Y CAGR")) for t in cols},
+        "10 years (per year)": {t: pct(stats[t].get("10Y CAGR")) for t in cols},
+        "15 years (per year)": {t: pct(stats[t].get("15Y CAGR")) for t in cols},
+        "20 years (per year)": {t: pct(stats[t].get("20Y CAGR")) for t in cols},
+        "Since data start (per year)": {t: pct(stats[t].get("Max CAGR")) for t in cols},
+    }
+    risk = {
+        "Worst drop ever": {t: pct(stats[t].get("Max DD")) for t in cols},
+        "Bottom was hit": {t: stats[t].get("DD Date", "-") for t in cols},
+        "This year so far": {t: pct(stats[t].get("YTD")) for t in cols},
+        "Last month": {t: pct(stats[t].get("1M")) for t in cols},
+    }
+    income = {
+        "Dividend yield (last 12 months)": {t: pct(stats[t].get("Yield (TTM)")) for t in cols},
+        "Pays": {t: {"Qr": "Quarterly", "Mo": "Monthly", "Yr": "Yearly"}.get(stats[t].get("Freq"), "-") for t in cols},
+        "Years of rising payouts": {t: stats[t].get("Streak", "-") for t in cols},
+        "Payout growth, 5 yrs (per year)": {t: pct(stats[t].get("5Y Div CAGR")) for t in cols},
+        "Payout growth, 10 yrs (per year)": {t: pct(stats[t].get("10Y Div CAGR")) for t in cols},
+    }
+    tax = {}
+
+    for t in cols:
+        key, _ = tax_profile_key(t)
+        tax.setdefault("Payout type", {})[t] = TAX_PROFILES[key]["name"]
+        tax.setdefault("Typical qualified share", {})[t] = f"{TAX_PROFILES[key]['qualified_share']:.0%}"
+        tax.setdefault("Best home", {})[t] = TAX_PROFILES[key]["best_home"].split(". ")[0] + "."
+
+    for title, block in [("What it is", what), ("Growth", growth), ("Risk", risk), ("Income", income), ("Taxes", tax)]:
+        df = pd.DataFrame(block).T.astype(str)   # all text: mixed numbers/strings break the table renderer
+        df.index.name = "Metric"
+        sections.append((title, df.reset_index()))
+
+    # Pairwise overlap
+    overlaps = []
+
+    for i, a in enumerate(cols):
+        for b in cols[i + 1:]:
+            share = holdings_overlap_pct(holdings[a][0], holdings[b][0])
+
+            if share is not None:
+                overlaps.append({"Pair": f"{a} vs {b}", "Same stocks by weight": f"{share:.0%}"})
+
+    # Verdicts
+    verdicts = []
+    exp = {t: stats[t].get("Expense") for t in cols if stats[t].get("Expense") is not None}
+
+    if len(exp) >= 2:
+        cheapest = min(exp, key=exp.get)
+        verdicts.append(f"Cheapest: {cheapest} at {exp[cheapest]:.2%} a year.")
+
+    for years in [20, 15, 10, 5, 3]:
+        col = f"{years}Y CAGR"
+        vals = {t: stats[t].get(col) for t in cols}
+
+        if all(v is not None and pd.notnull(v) for v in vals.values()) and len(vals) >= 2:
+            best = max(vals, key=vals.get)
+            worst = min(vals, key=vals.get)
+            verdicts.append(
+                f"Fastest growth over the longest period all of them share ({years} years): {best} at "
+                f"{vals[best]:.1%} a year; slowest {worst} at {vals[worst]:.1%}."
+            )
+            break
+
+    dd = {t: stats[t].get("Max DD") for t in cols if stats[t].get("Max DD") is not None}
+
+    if len(dd) >= 2:
+        roughest = min(dd, key=dd.get)
+        smoothest = max(dd, key=dd.get)
+        verdicts.append(
+            f"Roughest ride: {roughest} once fell {abs(dd[roughest]):.0%} (bottom {stats[roughest].get('DD Date')}); "
+            f"smoothest: {smoothest} at {abs(dd[smoothest]):.0%}."
+        )
+
+    yl = {t: stats[t].get("Yield (TTM)") for t in cols if stats[t].get("Yield (TTM)") is not None}
+
+    if len(yl) >= 2:
+        highest = max(yl, key=yl.get)
+        verdicts.append(f"Most income: {highest} yields {yl[highest]:.2%}; the rest pay less and are taxed less each year.")
+
+    if overlaps:
+        top_pair = max(overlaps, key=lambda o: float(o["Same stocks by weight"].rstrip("%")))
+        verdicts.append(f"Most overlap: {top_pair['Pair']} are {top_pair['Same stocks by weight']} the same stocks by weight.")
+
+    return sections, overlaps, verdicts
+
+
 # --- SHOWS & VOICES (podcast RSS feeds + YouTube channels) ---
 # To add a show: tell Claude the show name or paste its YouTube link and you get one line to paste here.
 #   kind "rss"     = a podcast or news feed address
@@ -1804,12 +2294,14 @@ def show_chart(fig):
 
 # --- UI ---
 def main():
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab_cmp, tab_tax, tab6, tab7 = st.tabs([
         "🚀 X-Ray",
         "🆚 Benchmark",
         "📈 Dividends",
         "🔍 Deep Dive",
         "👀 Watchlist",
+        "⚖️ Compare",
+        "🧾 Taxes",
         "📰 Insights & Updates",
         "🎧 Shows & Voices",
     ])
@@ -2175,6 +2667,237 @@ def main():
                     final_cols = [col for col in STATS_TABLE_COLS if col in df.columns]
 
                     st.dataframe(format_dataframe(df[final_cols]), height=500, hide_index=True)
+
+    # --- TAB: COMPARE (side by side, metrics as rows) ---
+    with tab_cmp:
+        st.header("⚖️ Compare funds side by side")
+        st.caption(
+            "Type two to four tickers. Metrics run down the page in plain words, funds run across, "
+            "so it reads well on a phone. Your portfolio's four are the default; try QNDX, QQQ to see twins."
+        )
+
+        cmp_tickers = parse_tickers(st.text_input("Tickers to compare:", DEFAULT_PORT, key="cmp_tickers"))
+        cmp_window = st.selectbox(
+            "Growth chart window:",
+            ["5Y", "10Y", "15Y", "20Y", "Max common history"],
+            index=1,
+            key="cmp_window"
+        )
+
+        if st.button("Compare in detail", key="compare_detail"):
+            st.session_state["cmp_go"] = True
+
+        if st.session_state.get("cmp_go"):
+            if len(cmp_tickers) < 2:
+                st.info("Enter at least two tickers.")
+            else:
+                sections, overlaps, verdicts = compare_sections(cmp_tickers[:6])
+
+                if not sections:
+                    st.warning("No usable data for those tickers right now. Wait a minute and press the button again.")
+                else:
+                    if verdicts:
+                        st.markdown("### 🧭 The short version")
+                        st.markdown("\n\n".join(f"- {v}" for v in verdicts))
+
+                    for title, df in sections:
+                        st.markdown(f"### {title}")
+                        st.dataframe(df, hide_index=True)
+
+                    if overlaps:
+                        st.markdown("### 🔁 How much they overlap")
+                        st.dataframe(pd.DataFrame(overlaps), hide_index=True)
+                        st.caption(
+                            "\"Same stocks by weight\" adds up, stock by stock, the smaller of the two funds' "
+                            "weights. 100% would mean identical portfolios."
+                        )
+
+                    st.markdown("### 💰 Growth of $10,000")
+                    years_map = {"5Y": 5, "10Y": 10, "15Y": 15, "20Y": 20, "Max common history": None}
+                    growth_df, start_used, skipped = build_growth_frame(cmp_tickers[:6], years_map[cmp_window])
+
+                    if growth_df.empty:
+                        st.info("Not enough overlapping history for the selected window.")
+                    else:
+                        fig = px.line(
+                            growth_df, x="Date", y="Growth of $10K", color="Ticker",
+                            title=f"Growth of $10,000 - {cmp_window} (index-extended history)"
+                        )
+                        fig.update_yaxes(type="log")
+                        show_chart(fig)
+
+                        if start_used is not None:
+                            st.caption(f"Chart starts {start_used.date()}. Log scale, so equal slopes mean equal growth rates.")
+
+                    if skipped:
+                        st.caption("Left off the chart (history starts after the window): " + ", ".join(skipped) + ".")
+
+    # --- TAB: TAXES ---
+    with tab_tax:
+        st.header("🧾 Taxes: what each fund does to your tax bill")
+        st.caption(
+            "General U.S. rules for 2026 in plain words, plus an estimate for your own blend. Not personal tax "
+            "advice. The exact qualified share of any fund is on your M1 1099-DIV (box 1b) each year."
+        )
+
+        # --- Part 1: profile of any ticker ---
+        st.markdown("### 1. Look up any ticker")
+        tax_tickers = parse_tickers(st.text_input("Tickers:", DEFAULT_PORT, key="tax_tickers"))
+
+        for ticker in tax_tickers[:8]:
+            key, how = tax_profile_key(ticker)
+            profile = TAX_PROFILES[key]
+
+            with st.expander(f"{ticker} - {profile['name']}", expanded=len(tax_tickers) <= 4):
+                st.markdown(f"**What it pays you:** {profile['payouts']}")
+                st.markdown(f"**Tax on those payouts:** {profile['payout_tax']}")
+                st.markdown(f"**Capital-gain payouts from the fund:** {profile['gains_payouts']}")
+                st.markdown(f"**When you sell shares:** {profile['selling']}")
+                st.markdown(f"**Best account to hold it in:** {profile['best_home']}")
+                st.markdown("**Upsides:** " + "; ".join(profile["upsides"]) + ".")
+                st.markdown("**Downsides:** " + "; ".join(profile["downsides"]) + ".")
+                st.markdown(f"**On your tax forms:** {profile['form']}")
+                st.caption(f"Classified as: {how}.")
+
+        st.markdown("---")
+
+        # --- Part 2: blended estimate ---
+        st.markdown("### 2. Estimate for my blend")
+        st.caption(
+            "Uses the X-Ray tickers and percentages. Only the share held in a taxable brokerage is taxed; "
+            "the Roth share is $0 every year and $0 on qualified withdrawals."
+        )
+
+        x_tickers = parse_tickers(st.session_state.get("xray_tickers", DEFAULT_PORT))
+        tax_weights = current_weights(x_tickers)
+
+        t1, t2 = st.columns(2)
+
+        with t1:
+            tax_value = st.number_input(
+                "Total portfolio value ($):",
+                min_value=0, value=int(st.session_state.get("xray_value", 0) or 0), step=1000, key="tax_value"
+            )
+            taxable_pct = st.number_input(
+                "Share held in a taxable brokerage (%):", min_value=0, max_value=100, value=50, step=5, key="tax_taxable_pct",
+                help="The rest is assumed to be Roth IRA. 100 = everything is in taxable."
+            )
+
+        with t2:
+            bracket = st.selectbox(
+                "Federal tax bracket (%):", [10, 12, 22, 24, 32, 35, 37], index=2, key="tax_bracket",
+                help="Your marginal federal rate on ordinary income. Housing and food allowances are not taxed, so company-grade officer pay usually lands in the 22% bracket."
+            )
+            state_pct = st.number_input(
+                "State income tax on investments (%):", min_value=0.0, max_value=15.0, value=0.0, step=0.5, key="tax_state",
+                help="0 if your state of legal residence has no income tax (Texas, Florida, and others)."
+            )
+            high_income = st.checkbox(
+                "Income above $200k single / $250k married (adds the 3.8% net investment income tax)",
+                value=False, key="tax_niit"
+            )
+
+        rates = tax_rates(bracket, high_income, state_pct)
+        taxable_share = taxable_pct / 100
+
+        st.caption(
+            f"Rates used: qualified dividends and long-term gains {rates['qualified']:.1%}, "
+            f"ordinary income {rates['ordinary']:.1%} (federal plus state)."
+        )
+
+        if tax_value <= 0 or not x_tickers:
+            st.info("Enter a portfolio value above to see dollar estimates (nothing is saved).")
+        else:
+            rows, total_payout, total_tax = blended_tax_estimate(x_tickers, tax_weights, float(tax_value), taxable_share, rates)
+
+            if rows:
+                st.dataframe(pd.DataFrame(rows), hide_index=True)
+
+                drag = total_tax / tax_value if tax_value else 0.0
+                blended_expense = 0.0
+                expense_weight = 0.0
+
+                for ticker, weight in tax_weights.items():
+                    ratio = get_expense_ratio(ticker)
+
+                    if ratio is not None:
+                        blended_expense += ratio * weight
+                        expense_weight += weight
+
+                expense_text = (
+                    f" For scale, fund fees cost you about {blended_expense / expense_weight:.2%} a year."
+                    if expense_weight > 0 else ""
+                )
+
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Payouts per year (whole portfolio)", f"${total_payout:,.0f}")
+                m2.metric("Tax on them per year", f"${total_tax:,.0f}")
+                m3.metric("Tax drag on the portfolio", f"{drag:.2%} / yr")
+
+                st.markdown(
+                    f"With {taxable_pct}% of the money in taxable and {100 - taxable_pct}% in Roth, your funds' payouts "
+                    f"cost about **${total_tax:,.0f} a year** in tax, which is **{drag:.2%}** of the portfolio.{expense_text} "
+                    "Nothing else is taxed until you sell, and you never have to."
+                )
+
+                # Projection
+                st.markdown("#### If this grows for years")
+                blended_now, _ = calculate_blended_performance(tax_weights)
+                default_growth = blended_now.get("10Y CAGR")
+                growth_pct = st.number_input(
+                    "Assumed growth per year (%):", min_value=0.0, max_value=40.0,
+                    value=float(round((default_growth or 0.10) * 100, 1)), step=0.5, key="tax_growth",
+                    help="Starts at your blend's 10-year growth rate. Yields and tax rates are held constant."
+                )
+                g = growth_pct / 100
+                proj_rows = []
+                cumulative = 0.0
+
+                for year in range(1, 31):
+                    value_t = tax_value * (1 + g) ** (year - 1)
+                    cumulative += value_t * drag
+
+                    if year in (1, 5, 10, 20, 30):
+                        proj_rows.append({
+                            "After": f"{year} yr" if year == 1 else f"{year} yrs",
+                            "Portfolio value": f"${tax_value * (1 + g) ** year:,.0f}",
+                            "Tax paid on payouts so far": f"${cumulative:,.0f}",
+                        })
+
+                st.dataframe(pd.DataFrame(proj_rows), hide_index=True)
+                st.caption(
+                    "Assumes no new contributions, payouts reinvested, and today's yields, weights and tax rates "
+                    "throughout. It is a scale check, not a forecast."
+                )
+
+        st.markdown("---")
+
+        # --- Part 3: if you ever sold ---
+        st.markdown("### 3. If you ever sold")
+        basis = st.number_input(
+            "What you paid in total for the taxable shares ($, optional):", min_value=0, value=0, step=1000, key="tax_basis"
+        )
+
+        if basis > 0 and tax_value > 0 and taxable_share > 0:
+            taxable_value = float(tax_value) * taxable_share
+            gain = taxable_value - basis
+
+            if gain > 0:
+                st.markdown(
+                    f"Taxable-account value about **${taxable_value:,.0f}** on **${basis:,.0f}** paid in: gain of "
+                    f"**${gain:,.0f}**. Sold after holding more than 1 year: about **${gain * rates['qualified']:,.0f}** "
+                    f"in tax ({rates['qualified']:.1%}). Sold within a year: about **${gain * rates['ordinary']:,.0f}** "
+                    f"({rates['ordinary']:.1%}). Roth shares: $0 on a qualified withdrawal."
+                )
+            else:
+                st.markdown("No gain on those numbers, so no tax on a sale (a loss could offset other gains or up to $3,000 of income a year).")
+
+        st.markdown(
+            "Rules that matter for a weekly buyer: every purchase is its own lot with its own one-year clock; "
+            "dividends on a lot are qualified once you have held it more than 60 days around the ex-dividend date, "
+            "which a never-sell holder always meets; M1 sells specific lots in a set order when you do sell, so "
+            "check that setting before any sale; and holding until you pass it on gives heirs a stepped-up basis."
+        )
 
     # --- TAB 6: LIVE INSIGHTS & UPDATES ---
     with tab6:
