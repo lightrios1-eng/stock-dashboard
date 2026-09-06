@@ -22,8 +22,8 @@ st.title("📊 Master Portfolio: Light Rios Edition")
 APP_VERSION = "2.0 (Sep 5, 2026)"
 
 # Your actual portfolio. Every tab starts with these tickers at these percentages.
-DEFAULT_PORT = "SPMO, QQQ, VGT, SMH"
-DEFAULT_WEIGHTS = {"SPMO": 25, "QQQ": 25, "VGT": 25, "SMH": 25}
+DEFAULT_PORT = "SPMO, QNDX, FTEC, SMH"
+DEFAULT_WEIGHTS = {"SPMO": 25, "QNDX": 25, "FTEC": 25, "SMH": 25}
 DEFAULT_BENCH = "VOO, QQQ"
 # Watchlist = funds you might consider, shown next to a "MY PORTFOLIO" comparison row.
 DEFAULT_WATCH = "QQQM, SCHG, VUG, XLK, SOXX, IYW"
