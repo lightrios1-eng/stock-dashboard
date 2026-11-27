@@ -1648,15 +1648,17 @@ def sector_shares(frame):
     return shares
 
 
-def fund_sector_shares(ticker):
-    """Sector split of one fund (or one stock) on its own."""
+def fund_sector_shares(ticker, labels=None):
+    """Sector split of one fund (or one stock) on its own. `labels` is an optional {symbol: sector}
+    that wins over the built-in map, so a table can use one set of labels in every column."""
     df, _ = get_holdings(ticker)
 
     if df.empty:
         return {}
 
     frame = merge_goog(df.rename(columns={"Raw_Weight": "Weight"})).reset_index(drop=True)
-    frame["Sector"] = assign_sectors(frame, lookups=0)
+    labels = labels or {}
+    frame["Sector"] = [labels.get(symbol) or sector_of(symbol) for symbol in frame["Symbol"]]
     return sector_shares(frame)
 
 
@@ -3482,7 +3484,11 @@ def tsp_projection(monthly_employee, monthly_agency, years, annual_growth):
 # --- DATA HEALTH (runs on every load; cheap checks on cached data) ---
 def data_health(tickers, deep=False):
     checks = []
-    today = pd.Timestamp.now().normalize()
+
+    try:
+        today = pd.Timestamp.now(tz="America/New_York").tz_localize(None).normalize()
+    except Exception:
+        today = pd.Timestamp.now().normalize()
 
     # 1. Prices
     try:
@@ -3618,7 +3624,7 @@ SHOW_FEEDS = [
     ("CNBC Television (YouTube)", "youtube", "@CNBCtelevision"),
     ("The Compound and Friends (podcast)", "rss", "https://feeds.megaphone.fm/TCP4771071679"),
     ("The Compound (YouTube)", "youtube", "@TheCompoundNews"),
-    ("The Real Eisman Playbook (podcast)", "rss", "https://feed.podbean.com/realeismanplaybook/feed.xml"),
+    ("The Real Eisman Playbook (podcast)", "rss", "https://rss.libsyn.com/shows/633424/destinations/5592589.xml"),
     ("The Real Eisman Playbook (YouTube)", "youtube", "@RealEismanPlaybook"),
     ("FINAiUS (YouTube)", "youtube", "@FINAiUS"),
 ]
@@ -4221,9 +4227,15 @@ def render_xray_results(etfs, weights, bench, portfolio_value):
         # ---------- 4. Sectors ----------
         st.subheader("🧩 Sectors", anchor="sectors")
         shares = sector_shares(full)
-        others = {t: fund_sector_shares(t) for t in held + bench}
+        # Every column uses the labels the blend settled on, so a stock is never one sector in the
+        # blend column and unlabelled in its own fund's column.
+        labels = dict(zip(full["Symbol"], full["Sector"]))
+        others = {t: fund_sector_shares(t, labels) for t in held + bench}
         real = sorted((s for s in shares if s not in (CASH_LABEL, UNCLASSIFIED)), key=lambda s: -shares[s])
-        tail = [s for s in (UNCLASSIFIED, CASH_LABEL) if shares.get(s, 0) > 0.00005]
+        tail = [
+            s for s in (UNCLASSIFIED, CASH_LABEL)
+            if shares.get(s, 0) > 0.00005 or any(split.get(s, 0) > 0.00005 for split in others.values())
+        ]
         seen = set(real) | set(tail)
         extra = sorted({s for split in others.values() for s in split if s not in seen and split[s] > 0.00005
                         and s not in (CASH_LABEL, UNCLASSIFIED)})
