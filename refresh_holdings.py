@@ -84,9 +84,9 @@ INVESCO_URL = (
 )
 
 # Rough number of names each fund really holds; a fetch far below it is treated as cut off.
-EXPECTED = {"SPMO": 100, "QQQ": 101, "QQQM": 101, "QNDX": 101, "VGT": 320, "FTEC": 300, "SMH": 26,
-            "VOO": 500, "SPY": 500, "IVV": 500, "SPLG": 500, "SCHG": 200, "VUG": 150, "XLK": 70,
-            "SOXX": 30, "IYW": 140, "MGK": 70, "MTUM": 125}
+EXPECTED = {"SPMO": 100, "QQQ": 101, "QQQM": 101, "QNDX": 101, "VGT": 300, "FTEC": 290, "SMH": 26,
+            "VOO": 500, "SPY": 500, "IVV": 500, "SPLG": 500, "SPYM": 500, "SCHG": 200, "VUG": 150,
+            "XLK": 70, "SOXX": 30, "IYW": 140, "MGK": 56, "MTUM": 125}
 
 URL = (
     "https://research2.fidelity.com/fidelity/screeners/etf/public/"
@@ -309,11 +309,11 @@ def main():
         previous = len((data.get(ticker) or {}).get("rows") or [])
         expected = EXPECTED.get(ticker)
 
+        # A cut-off list is never saved, not even for a fund with no earlier snapshot: the app would
+        # rather read the fund's page itself than start from a short list.
         if rows and expected and len(rows) < 0.6 * expected:
-            print(f"{ticker}: only {len(rows)} names from {source}, fund holds ~{expected} - looks cut off")
-
-            if previous >= len(rows):
-                rows = []
+            print(f"{ticker}: only {len(rows)} names from {source}, fund holds ~{expected} - looks cut off, not saved")
+            rows = []
 
         if rows and previous and len(rows) < 0.6 * previous:
             print(f"{ticker}: {len(rows)} names is far below the previous {previous} - keeping previous snapshot")

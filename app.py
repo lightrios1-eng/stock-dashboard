@@ -1,3 +1,4 @@
+import inspect
 import io
 import json
 import math
@@ -36,15 +37,14 @@ def md(body, **kwargs):
 def cap(body, **kwargs):
     return _st_caption(_money_safe(body), **kwargs)
 
-APP_VERSION = "2.4 (Sep 6, 2026)"
+APP_VERSION = "3.0 (Nov 26, 2026)"
 
 # Your actual portfolio. Every tab starts with these tickers at these percentages.
-DEFAULT_PORT = "SPMO, QNDX, FTEC, SMH"
-DEFAULT_WEIGHTS = {"SPMO": 25, "QNDX": 25, "FTEC": 25, "SMH": 25}
+DEFAULT_PORT = "QNDX, VGT, SPMO"
+DEFAULT_WEIGHTS = {"QNDX": 34, "VGT": 33, "SPMO": 33}
 DEFAULT_BENCH = "VOO, QQQ"
-# Watchlist = funds you might consider, shown next to a "MY PORTFOLIO" comparison row.
-# QQQ and VGT are the higher-fee twins of QNDX and FTEC, kept here for side-by-side checks.
-DEFAULT_WATCH = "QQQ, VGT, QQQM, SCHG, VUG, XLK"
+# Watchlist = funds you used to hold or have weighed, shown next to a "MY PORTFOLIO" comparison row.
+DEFAULT_WATCH = "MGK, FTEC, SPYM, SMH, QQQM, SCHG"
 
 ALL_NUM_COLS = [
     "Yield (TTM)", "Yield (Fwd)", "1D", "1W", "1M", "YTD",
@@ -56,7 +56,29 @@ ALL_NUM_COLS = [
     "20Y Div CAGR", "Max Div CAGR"
 ]
 
-PERF_PERIODS = ["1M", "YTD", "1Y Total", "3Y CAGR", "5Y CAGR", "10Y CAGR", "15Y CAGR", "20Y CAGR"]
+PERF_PERIODS = ["1D", "1W", "1M", "YTD", "1Y Total", "3Y CAGR", "5Y CAGR", "10Y CAGR", "15Y CAGR", "20Y CAGR"]
+
+# Plain-word tile labels for the periods above, and what each one means.
+PERF_LABELS = {
+    "1D": "1 day", "1W": "1 week", "1M": "1 month", "YTD": "This year", "1Y Total": "1 year",
+    "3Y CAGR": "3 yrs / yr", "5Y CAGR": "5 yrs / yr", "10Y CAGR": "10 yrs / yr",
+    "15Y CAGR": "15 yrs / yr", "20Y CAGR": "20 yrs / yr",
+}
+PERF_HELP = {
+    "1D": "Change from the previous market close to the latest price.",
+    "1W": "Change over the last 5 market days.",
+    "1M": "Change over the last 21 market days, about one month.",
+    "YTD": "Change since the last close of last year.",
+    "1Y Total": "Total return over the last 12 months, dividends included.",
+    "3Y CAGR": "Average growth per year over the last 3 years, dividends included.",
+    "5Y CAGR": "Average growth per year over the last 5 years, dividends included.",
+    "10Y CAGR": "Average growth per year over the last 10 years, dividends included.",
+    "15Y CAGR": "Average growth per year over the last 15 years, dividends included.",
+    "20Y CAGR": "Average growth per year over the last 20 years, dividends included.",
+}
+
+# Width of one number tile in pixels. Two fit side by side on a phone.
+TILE_WIDTH = 158
 
 # Shown as percentages in tables. "Expense" is averaged into the portfolio row; "Max DD" is not.
 EXTRA_PCT_COLS = ["Expense", "Max DD"]
@@ -81,6 +103,7 @@ EXTEND_CHAIN = {
     "VOO":  [("^SP500TR", "tr_index"), ("VFINX", "fund"), ("^GSPC", "pr_index")],
     "IVV":  [("^SP500TR", "tr_index"), ("VFINX", "fund"), ("^GSPC", "pr_index")],
     "SPLG": [("^SP500TR", "tr_index"), ("VFINX", "fund"), ("^GSPC", "pr_index")],
+    "SPYM": [("VOO", "fund"), ("^SP500TR", "tr_index"), ("VFINX", "fund"), ("^GSPC", "pr_index")],
     "SPY":  [("^SP500TR", "tr_index"), ("VFINX", "fund"), ("^GSPC", "pr_index")],
     "VTI":  [("VTSMX", "fund"), ("^GSPC", "pr_index")],
     "SCHG": [("VUG", "fund"), ("IWF", "fund")],
@@ -105,6 +128,9 @@ INDEX_NOTE = {
     "VOO":  "Tracks S&P 500. Extended with ^SP500TR (total return, 1988), VFINX (1980), ^GSPC (price-only, 1927).",
     "SPY":  "Tracks S&P 500. Extended with ^SP500TR (total return, 1988), VFINX (1980), ^GSPC (price-only, 1927).",
     "SCHG": "Tracks DJ US Large-Cap Growth. Extended with VUG and IWF (similar large-growth indexes).",
+    "MGK":  "Tracks CRSP US Mega Cap Growth. Extended with VUG and IWF (similar large-growth indexes).",
+    "SPYM": "State Street SPDR Portfolio S&P 500 ETF (0.02%/yr). The same fund that used to trade as SPLG; "
+            "the ticker changed in late 2025. Tracks the S&P 500. Extended with VOO and S&P 500 index history.",
 }
 
 IND_MAP = {
@@ -134,7 +160,60 @@ IND_MAP = {
     "SCHG": "Growth ETF", "VUG": "Growth ETF", "MGK": "Mega-Cap Growth ETF",
     "VOO": "S&P 500 ETF", "SPY": "S&P 500 ETF", "IVV": "S&P 500 ETF",
     "SPLG": "S&P 500 ETF", "VTI": "Total Market ETF", "SCHD": "Dividend ETF",
-    "VYM": "Dividend ETF", "VIG": "Dividend ETF", "JEPQ": "Covered-Call ETF"
+    "VYM": "Dividend ETF", "VIG": "Dividend ETF", "JEPQ": "Covered-Call ETF",
+    "SPYM": "S&P 500 ETF",
+    "JNJ": "Pharma & MedTech", "MRK": "Pharma", "ABBV": "Pharma", "PFE": "Pharma", "BMY": "Pharma",
+    "AZN": "Pharma", "TMO": "Life Science Tools", "ABT": "Medical Devices", "VRTX": "Biotech",
+    "GILD": "Biotech", "REGN": "Biotech", "CVS": "Pharmacy/Health Ins",
+    "XOM": "Oil & Gas", "CVX": "Oil & Gas", "COP": "Oil & Gas", "VLO": "Oil Refining",
+    "MPC": "Oil Refining", "PSX": "Oil Refining",
+    "BRK.B": "Insurance/Conglomerate", "BAC": "Bank", "WFC": "Bank", "C": "Bank",
+    "GS": "Investment Bank", "MS": "Investment Bank", "AXP": "Payments/Cards", "SCHW": "Brokerage",
+    "BLK": "Asset Manager", "SPGI": "Financial Data", "PGR": "Insurance", "CB": "Insurance",
+    "CAT": "Heavy Machinery", "GE": "Aerospace", "RTX": "Aerospace & Defense", "LMT": "Defense",
+    "BA": "Aerospace", "HON": "Industrial Conglomerate", "UNP": "Railroad", "CSX": "Railroad",
+    "GEV": "Power Equipment", "ETN": "Electrical Equipment", "UBER": "Ride-Hailing",
+    "BKNG": "Online Travel", "MCD": "Restaurants", "SBUX": "Restaurants", "NKE": "Apparel",
+    "LOW": "Home Improvement", "TJX": "Off-Price Retail", "MELI": "E-Commerce (Latin America)",
+    "PDD": "E-Commerce (China)", "SHOP": "E-Commerce Software",
+    "PG": "Household Products", "PM": "Tobacco", "MO": "Tobacco",
+    "T": "Telecom", "VZ": "Telecom", "TMUS": "Telecom", "CMCSA": "Cable/Media", "DIS": "Media & Parks",
+    "IBM": "IT Services", "ACN": "IT Services", "ADP": "Payroll Software", "APP": "Ad Software",
+    "ANET": "Networking Hardware", "APH": "Electronic Components", "DELL": "PC/Server Hardware",
+    "HPE": "Server Hardware", "STX": "Data Storage", "WDC": "Data Storage", "SNDK": "Data Storage (Flash)",
+    "GLW": "Glass/Fiber Optics", "LITE": "Optical Components", "COHR": "Optical Components",
+    "CIEN": "Optical Networking", "MRVL": "Semi - Data Center", "MSTR": "Bitcoin Treasury/Software",
+    "LIN": "Industrial Gases", "NEE": "Utility", "WELL": "Health Care REIT", "PLD": "Industrial REIT",
+}
+
+# Company names for the stocks most likely to top a blend. Anything not listed shows its symbol.
+NAME_MAP = {
+    "NVDA": "Nvidia", "AAPL": "Apple", "MSFT": "Microsoft", "AMZN": "Amazon",
+    "GOOG": "Alphabet (both share classes)", "GOOGL": "Alphabet",
+    "META": "Meta Platforms", "AVGO": "Broadcom", "TSLA": "Tesla", "BRK.B": "Berkshire Hathaway",
+    "JPM": "JPMorgan Chase", "LLY": "Eli Lilly", "V": "Visa", "MA": "Mastercard", "XOM": "Exxon Mobil",
+    "JNJ": "Johnson & Johnson", "WMT": "Walmart", "COST": "Costco", "NFLX": "Netflix", "ORCL": "Oracle",
+    "AMD": "Advanced Micro Devices", "MU": "Micron Technology", "INTC": "Intel", "CSCO": "Cisco Systems",
+    "PLTR": "Palantir", "CRM": "Salesforce", "ADBE": "Adobe", "QCOM": "Qualcomm",
+    "TXN": "Texas Instruments", "AMAT": "Applied Materials", "LRCX": "Lam Research", "KLAC": "KLA",
+    "ADI": "Analog Devices", "PANW": "Palo Alto Networks", "CRWD": "CrowdStrike", "NOW": "ServiceNow",
+    "INTU": "Intuit", "IBM": "IBM", "ACN": "Accenture", "ANET": "Arista Networks", "APH": "Amphenol",
+    "MRK": "Merck", "UNH": "UnitedHealth", "ABBV": "AbbVie", "KO": "Coca-Cola", "PEP": "PepsiCo",
+    "PG": "Procter & Gamble", "HD": "Home Depot", "BAC": "Bank of America", "GS": "Goldman Sachs",
+    "MS": "Morgan Stanley", "CAT": "Caterpillar", "RTX": "RTX", "GE": "GE Aerospace",
+    "TMUS": "T-Mobile US", "ISRG": "Intuitive Surgical", "AMGN": "Amgen", "BKNG": "Booking Holdings",
+    "LIN": "Linde", "SHOP": "Shopify", "ASML": "ASML", "ARM": "Arm Holdings", "PDD": "PDD (Temu)",
+    "APP": "AppLovin", "MELI": "MercadoLibre", "STX": "Seagate", "WDC": "Western Digital",
+    "SNDK": "Sandisk", "DELL": "Dell", "MRVL": "Marvell", "SNPS": "Synopsys", "CDNS": "Cadence Design",
+    "TSM": "Taiwan Semiconductor", "UBER": "Uber", "CVX": "Chevron", "WFC": "Wells Fargo",
+    "C": "Citigroup", "VLO": "Valero", "WELL": "Welltower", "LITE": "Lumentum",
+    "MPC": "Marathon Petroleum", "HON": "Honeywell", "GILD": "Gilead", "VRTX": "Vertex",
+    "MSTR": "Strategy (MicroStrategy)", "ADP": "ADP", "SBUX": "Starbucks", "CMCSA": "Comcast",
+    "PM": "Philip Morris", "T": "AT&T", "VZ": "Verizon", "DIS": "Disney", "MCD": "McDonald's",
+    "ABT": "Abbott", "TMO": "Thermo Fisher", "AXP": "American Express", "NKE": "Nike", "BA": "Boeing",
+    "LMT": "Lockheed Martin", "MPWR": "Monolithic Power", "NXPI": "NXP", "MCHP": "Microchip",
+    "TER": "Teradyne", "GLW": "Corning", "CIEN": "Ciena", "COHR": "Coherent", "HPE": "Hewlett Packard Enterprise",
+    "BMY": "Bristol-Myers Squibb", "CVS": "CVS Health", "PSX": "Phillips 66", "PLD": "Prologis",
 }
 
 B_INCEPT = {
@@ -149,9 +228,13 @@ B_INCEPT = {
 
 # Verified annual expense ratios (as a fraction: 0.0013 = 0.13% per year).
 # Anything not listed here is looked up from Yahoo Finance at run time.
+# QNDX, VGT, SPMO, QQQ, FTEC, MGK, SPYM and VOO were re-checked Nov 24-26, 2026. SMH, QQQM and VTI were
+# last checked Sep 5, 2026. QQQ fell from 0.20% to 0.18% on Dec 22, 2025; versions 2.0 to 2.4 still
+# carried the old 0.20%. SPLG is the old ticker of SPYM.
+FEES_VERIFIED = "Nov 26, 2026"
 EXPENSE_RATIO = {
-    "SPMO": 0.0013, "QQQ": 0.0020, "QQQM": 0.0015, "QNDX": 0.0010, "VGT": 0.0009, "SMH": 0.0035,
-    "VOO": 0.0003, "VTI": 0.0003,
+    "QNDX": 0.0010, "VGT": 0.0009, "SPMO": 0.0013, "QQQ": 0.0018, "QQQM": 0.0015, "FTEC": 0.00084,
+    "MGK": 0.0005, "SPYM": 0.0002, "SPLG": 0.0002, "SMH": 0.0035, "VOO": 0.0003, "VTI": 0.0003,
 }
 
 
@@ -608,23 +691,44 @@ class _DataUnavailable(Exception):
     """Raised inside cached fetchers so failures are NOT cached and retries work."""
 
 
+class _PartialData(Exception):
+    """Carries a usable but incomplete result out of a cached function, so it is shown now but not
+    kept: the next screen refresh tries again for the complete version."""
+
+    def __init__(self, result):
+        super().__init__("partial data")
+        self.result = result
+
+
+@st.cache_resource(show_spinner=False)
+def _failure_log():
+    """Downloads that just failed, with the time to try each one again. Stops a failing symbol from
+    being retried (slowly) on every screen refresh, without ever remembering the failure for hours."""
+    return {}
+
+
+def _recently_failed(key):
+    until = _failure_log().get(key)
+    return bool(until and time.time() < until)
+
+
+def _mark_failed(key, seconds=600):
+    _failure_log()[key] = time.time() + seconds
+
+
 def _with_retries(fetch_fn, tries=3, base_delay=2.0):
     """Retry wrapper: Yahoo rate-limits cloud IPs (HTTP 429), one retry usually clears it."""
-    last_err = None
-
     for attempt in range(tries):
         try:
             result = fetch_fn()
 
             if result is not None:
                 return result
-        except Exception as err:
-            last_err = err
+        except Exception:
+            pass
 
-        time.sleep(base_delay * (attempt + 1))
-
-    if last_err is not None:
-        return None
+        if attempt < tries - 1:
+            time.sleep(base_delay * (attempt + 1))
 
     return None
 
@@ -663,36 +767,54 @@ def _history_bundle_cached(symbol):
 
 
 def get_history_bundle(symbol):
-    symbol = symbol.strip().upper()
+    symbol = str(symbol).strip().upper()
+    empty = (pd.Series(dtype=float), pd.Series(dtype=float))
 
-    if not symbol:
-        return pd.Series(dtype=float), pd.Series(dtype=float)
+    # A symbol that failed in the last 10 minutes is skipped, so one bad ticker cannot slow every refresh.
+    if not symbol or _recently_failed("hist:" + symbol):
+        return empty
 
     try:
         return _history_bundle_cached(symbol)
     except Exception:
-        return pd.Series(dtype=float), pd.Series(dtype=float)
+        _mark_failed("hist:" + symbol)
+        return empty
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def get_info(symbol):
-    """Ticker metadata (yield, category). Non-critical, cached 24h."""
+def _info_cached(symbol):
+    """Ticker metadata from Yahoo. Raises when nothing comes back so a miss is not kept for a day."""
     def fetch():
         info = yf.Ticker(symbol).info
         return info if info else None
 
-    return _with_retries(fetch, tries=2, base_delay=1.5) or {}
+    result = _with_retries(fetch, tries=2, base_delay=1.5)
+
+    if not result:
+        raise _DataUnavailable(symbol)
+
+    return result
+
+
+def get_info(symbol):
+    """Ticker metadata (yield, category, sector). Non-critical. Kept 24h when it loads; a failed
+    lookup is tried again after 10 minutes instead of being remembered for a day."""
+    symbol = str(symbol).strip().upper()
+
+    if not symbol or _recently_failed("info:" + symbol):
+        return {}
+
+    try:
+        return _info_cached(symbol)
+    except Exception:
+        _mark_failed("info:" + symbol)
+        return {}
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def get_expense_ratio(ticker):
-    """Annual expense ratio as a fraction. Verified table first, then Yahoo's fund data.
-    Returns None when unknown (shown as '-')."""
-    ticker = ticker.strip().upper()
-
-    if ticker in EXPENSE_RATIO:
-        return EXPENSE_RATIO[ticker]
-
+def _expense_ratio_lookup(ticker):
+    """Expense ratio from Yahoo's fund data, as a fraction. Raises when Yahoo has nothing, so a miss is
+    not kept for a day (in v2.4 a single failed lookup left the fund blank for 24 hours)."""
     def as_fraction(value):
         try:
             if value is None or pd.isna(value):
@@ -732,30 +854,50 @@ def get_expense_ratio(ticker):
     except Exception:
         pass
 
-    return None
+    raise _DataUnavailable(ticker)
+
+
+def get_expense_ratio(ticker):
+    """Annual expense ratio as a fraction. Verified table first, then Yahoo's fund data. A single
+    stock has no fund fee, so it is 0. Returns None when unknown (shown as '-')."""
+    ticker = str(ticker).strip().upper()
+
+    if ticker in EXPENSE_RATIO:
+        return EXPENSE_RATIO[ticker]
+
+    if is_single_stock(ticker):
+        return 0.0
+
+    if _recently_failed("expense:" + ticker):
+        return None
+
+    try:
+        return _expense_ratio_lookup(ticker)
+    except Exception:
+        _mark_failed("expense:" + ticker)
+        return None
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
-def build_extended_close(ticker):
-    """
-    Splice the fund's adjusted close with older same-index funds / index data so
-    returns reach back to (or toward) the index's inception, not just the ETF's.
-    Returns (series, source_labels, has_price_only_era, has_proxy_era).
-    """
+def _extended_close_cached(ticker):
+    """Does the splicing for build_extended_close. Raises when the fund itself has no data, and hands
+    back a partial result (shown, not kept) when an older fund or index in its chain did not download."""
     close, _ = get_history_bundle(ticker)
 
     if close.empty:
-        return close, [], False, False
+        raise _DataUnavailable(ticker)
 
     sources = [f"{ticker} {close.index[0].year}→now"]
     has_price_only = False
     has_proxy = False
+    incomplete = False
     ext = close
 
     for symbol, kind in EXTEND_CHAIN.get(ticker, []):
         proxy_close, _ = get_history_bundle(symbol)
 
         if proxy_close.empty:
+            incomplete = True
             continue
 
         first = ext.index[0]
@@ -784,7 +926,26 @@ def build_extended_close(ticker):
         else:
             has_proxy = True
 
-    return ext, sources, has_price_only, has_proxy
+    result = (ext, sources, has_price_only, has_proxy)
+
+    if incomplete:
+        raise _PartialData(result)
+
+    return result
+
+
+def build_extended_close(ticker):
+    """
+    Splice the fund's adjusted close with older same-index funds / index data so
+    returns reach back to (or toward) the index's inception, not just the ETF's.
+    Returns (series, source_labels, has_price_only_era, has_proxy_era).
+    """
+    try:
+        return _extended_close_cached(str(ticker).strip().upper())
+    except _PartialData as partial:
+        return partial.result
+    except Exception:
+        return pd.Series(dtype=float), [], False, False
 
 
 def annual_dividends(symbol):
@@ -798,19 +959,23 @@ def annual_dividends(symbol):
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
-def build_div_growth_factors(ticker):
-    """
-    Year -> dividend growth factor (div[y] / div[y-1]), preferring the fund's own
-    history, then filling earlier years from same-index proxy funds in the chain.
-    First partial year of each source is excluded. Returns (factors, proxy_symbols_used).
-    """
+def _div_growth_factors_cached(ticker):
+    """Does the work for build_div_growth_factors. Hands back a partial result (shown, not kept) when
+    an older same-index fund in the chain did not download."""
     current_year = pd.Timestamp.now().year
     factors = {}
     proxies_used = []
+    incomplete = False
 
     chain = [ticker] + [s for s, kind in EXTEND_CHAIN.get(ticker, []) if kind == "fund"]
 
     for symbol in chain:
+        close, _ = get_history_bundle(symbol)
+
+        if close.empty:
+            incomplete = True
+            continue
+
         annual = annual_dividends(symbol)
 
         if len(annual) < 3:
@@ -830,7 +995,26 @@ def build_div_growth_factors(ticker):
         if used_here and symbol != ticker:
             proxies_used.append(symbol)
 
-    return pd.Series(factors).sort_index(), proxies_used
+    result = (pd.Series(factors, dtype=float).sort_index(), proxies_used)
+
+    if incomplete:
+        raise _PartialData(result)
+
+    return result
+
+
+def build_div_growth_factors(ticker):
+    """
+    Year -> dividend growth factor (div[y] / div[y-1]), preferring the fund's own
+    history, then filling earlier years from same-index proxy funds in the chain.
+    First partial year of each source is excluded. Returns (factors, proxy_symbols_used).
+    """
+    try:
+        return _div_growth_factors_cached(ticker)
+    except _PartialData as partial:
+        return partial.result
+    except Exception:
+        return pd.Series(dtype=float), []
 
 
 def div_cagr_from_factors(factors, years):
@@ -881,18 +1065,25 @@ def max_div_cagr(factors):
 
 
 @st.cache_data(ttl=21600, show_spinner=False)
-def get_full_stats(ticker):
-    ticker = ticker.strip().upper()
-
-    if not ticker:
-        return None
-
+def _full_stats_cached(ticker):
+    """Every long-history number for one ticker. Kept 6 hours when complete. Raises when there is no
+    price data, and hands back a partial result (shown, not kept) when part of the older history did not
+    download, so a bad minute at Yahoo never sticks for hours."""
     own_close, div = get_history_bundle(ticker)
 
     if own_close.empty:
-        return None
+        raise _DataUnavailable(ticker)
 
-    ext_close, sources, has_price_only, has_proxy = build_extended_close(ticker)
+    complete = True
+
+    try:
+        ext_close, sources, has_price_only, has_proxy = _extended_close_cached(ticker)
+    except _PartialData as partial:
+        ext_close, sources, has_price_only, has_proxy = partial.result
+        complete = False
+    except Exception:
+        ext_close, sources, has_price_only, has_proxy = own_close, [], False, False
+        complete = False
 
     if ext_close.empty:
         ext_close = own_close
@@ -900,7 +1091,7 @@ def get_full_stats(ticker):
     price = float(own_close.iloc[-1])
 
     if price <= 0:
-        return None
+        raise _DataUnavailable(ticker)
 
     # A fund younger than a year has no full year of payouts yet. Borrow the dividend record
     # (and matching price) of the older same-index fund so yield, streak and frequency are real.
@@ -928,6 +1119,12 @@ def get_full_stats(ticker):
         y_ttm = 0.0
 
     info = get_info(ticker)
+
+    # The label and forward yield of a ticker this file does not already know come from Yahoo's
+    # metadata. If that did not load, show what we have but do not keep it.
+    if not info and ticker not in IND_MAP:
+        complete = False
+
     quote_type = str(info.get("quoteType", "")).upper()
     fwd_yield = normalize_ratio(info.get("dividendYield"), default=None)
 
@@ -941,12 +1138,13 @@ def get_full_stats(ticker):
     m = {
         "Ticker": ticker,
         "Price": price,
+        "As of": str(own_close.index[-1].date()),
         "Industry": industry,
         "Inception": B_INCEPT.get(ticker, str(own_close.index[0].date())),
         "Hist From": str(ext_close.index[0].date()),
         "Yield (Fwd)": y_fwd,
         "Yield (TTM)": y_ttm,
-        "Expense": get_expense_ratio(ticker),
+        "Expense": None,   # filled in fresh by get_full_stats so a fee is never 6 hours stale
     }
 
     # Dividend streak / frequency from the fund's own payments.
@@ -981,6 +1179,7 @@ def get_full_stats(ticker):
     # Since-index-inception ("Max") on the extended series.
     span_years = (ext_close.index[-1] - ext_close.index[0]).days / 365.25
     start_val = float(ext_close.iloc[0])
+    m["Span Years"] = span_years
 
     if span_years >= 1 and start_val > 0:
         max_total = float(ext_close.iloc[-1]) / start_val - 1
@@ -1000,7 +1199,14 @@ def get_full_stats(ticker):
         m["DD Date"] = "-"
 
     # Dividend growth, extended through same-index proxy funds where needed.
-    factors, div_proxies = build_div_growth_factors(ticker)
+    try:
+        factors, div_proxies = _div_growth_factors_cached(ticker)
+    except _PartialData as partial:
+        factors, div_proxies = partial.result
+        complete = False
+    except Exception:
+        factors, div_proxies = pd.Series(dtype=float), []
+        complete = False
 
     for years in DIV_YEARS:
         m[f"{years}Y Div CAGR"] = div_cagr_from_factors(factors, years)
@@ -1028,14 +1234,139 @@ def get_full_stats(ticker):
 
     m["Hist Notes"] = "; ".join(notes) if notes else "-"
 
+    if not complete:
+        raise _PartialData(m)
+
     return m
 
 
-@st.cache_data(ttl=86400, show_spinner=False)
+def get_full_stats(ticker):
+    """Stats for one ticker, or None when there is no price data. The fee is looked up fresh each time."""
+    ticker = str(ticker).strip().upper()
+
+    if not ticker:
+        return None
+
+    try:
+        stats = dict(_full_stats_cached(ticker))
+    except _PartialData as partial:
+        stats = dict(partial.result)
+    except Exception:
+        return None
+
+    stats["Expense"] = get_expense_ratio(ticker)
+    return stats
+
+
+SHORT_MOVE_COLS = ("1D", "1W", "1M")
+
+
+def freshen_stats(stats, pulse_row):
+    """Fold the newest price into one ticker's stats. The long history is cached for 6 hours, but the
+    price snapshot is 15 minutes fresh, so the day, week and month moves come from the snapshot and
+    every longer figure has its end point moved to the newest price."""
+    stats = dict(stats)
+
+    if pulse_row is None:
+        return stats
+
+    try:
+        new_price = float(pulse_row["Price"])
+        old_price = float(stats["Price"])
+        as_of = str(pulse_row["As of"])
+    except Exception:
+        return stats
+
+    if not (new_price > 0 and old_price > 0) or as_of < str(stats.get("As of") or ""):
+        return stats
+
+    factor = new_price / old_price
+
+    # A jump this size between two looks at the same fund is a bad tick or a split the two feeds
+    # disagree on, not a market move. Leave the cached figures alone.
+    if not 0.5 < factor < 2.0:
+        return stats
+
+    for col in SHORT_MOVE_COLS:
+        fresh = pulse_row.get(col)
+
+        if fresh is not None and pd.notnull(fresh):
+            stats[col] = float(fresh)
+
+    # Two facts only the price snapshot has: distance from the 52-week high and the 200-day trend.
+    for col in ("vs 52W High", "200DMA"):
+        fresh = pulse_row.get(col)
+
+        if fresh is not None and pd.notnull(fresh):
+            stats[col] = fresh
+
+    if abs(factor - 1) > 1e-9:
+        for col in ["YTD", "Max Total"] + [f"{years}Y Total" for years in TOTAL_YEARS]:
+            old = stats.get(col)
+
+            if old is not None and pd.notnull(old):
+                stats[col] = (1 + old) * factor - 1
+
+        for years in TOTAL_YEARS:
+            if years > 1:
+                total = stats.get(f"{years}Y Total")
+                stats[f"{years}Y CAGR"] = (
+                    ((1 + total) ** (1 / years)) - 1
+                    if total is not None and pd.notnull(total) and total > -1
+                    else None
+                )
+
+        span = stats.get("Span Years")
+        max_total = stats.get("Max Total")
+
+        if span and span >= 1 and max_total is not None and pd.notnull(max_total) and max_total > -1:
+            stats["Max CAGR"] = (1 + max_total) ** (1 / span) - 1
+
+        for col in ("Yield (TTM)", "Yield (Fwd)"):
+            old = stats.get(col)
+
+            if old is not None and pd.notnull(old):
+                stats[col] = old / factor
+
+    stats["Price"] = new_price
+    stats["As of"] = as_of
+    return stats
+
+
+def fresh_stats(tickers):
+    """{ticker: stats} with the newest price folded in. Tickers with no data are simply left out."""
+    tickers = [t for t in dict.fromkeys(tickers) if t]
+
+    if not tickers:
+        return {}
+
+    try:
+        pulse_df, _ = get_pulse(tuple(tickers))
+    except Exception:
+        pulse_df = pd.DataFrame()
+
+    pulse = {}
+
+    if pulse_df is not None and not pulse_df.empty and "Ticker" in pulse_df.columns:
+        pulse = {row["Ticker"]: row for _, row in pulse_df.iterrows()}
+
+    out = {}
+
+    for ticker in tickers:
+        stats = get_full_stats(ticker)
+
+        if stats:
+            out[ticker] = freshen_stats(stats, pulse.get(ticker))
+
+    return out
+
+
+@st.cache_resource(ttl=86400, show_spinner=False)
 def load_bundled_holdings():
     """Full-basket snapshots committed to the repo (holdings_static.json). Captured
     from Fidelity's public ETF research pages, which block cloud-server IPs - so the
-    snapshots are bundled with the app and refreshed by committing a new file."""
+    snapshots are bundled with the app and refreshed by committing a new file.
+    Read-only: nothing in the app changes this dictionary."""
     try:
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "holdings_static.json")
 
@@ -1048,8 +1379,11 @@ def load_bundled_holdings():
 @st.cache_data(ttl=43200, show_spinner=False)
 def _holdings_cached(ticker):
     """Cached 12h on success; raises on failure so failures are retried, not cached.
-    Order: bundled full-basket snapshot -> live Fidelity research -> Yahoo top-10."""
+    Order: bundled full-basket snapshot -> live Fidelity research -> Yahoo top-10. A cut-off list
+    (far fewer names than the fund really holds) never wins over a complete one: if the bundled
+    list is cut off the live page is still tried, and the longer of the two is used."""
     bundled = load_bundled_holdings().get(ticker)
+    cut_off = None
 
     if bundled and bundled.get("rows"):
         df = pd.DataFrame(bundled["rows"], columns=["Symbol", "Raw_Weight"])
@@ -1061,19 +1395,26 @@ def _holdings_cached(ticker):
         if len(df) >= 5 and 0.4 <= df["Raw_Weight"].sum() <= 1.6:
             asof = bundled.get("asof", "n/a")
 
-            if holdings_completeness(ticker, len(df)) == "partial":
-                return df.reset_index(drop=True), f"partial list: {len(df)} of ~{EXPECTED_HOLDINGS[ticker]} (snapshot as of {asof})"
+            if holdings_completeness(ticker, len(df)) != "partial":
+                return df.reset_index(drop=True), f"full basket snapshot, as of {asof}"
 
-            return df.reset_index(drop=True), f"full basket snapshot, as of {asof}"
+            cut_off = (
+                df.reset_index(drop=True),
+                f"partial list: {len(df)} of ~{EXPECTED_HOLDINGS[ticker]} (snapshot as of {asof})",
+            )
 
     full_df, asof = fetch_fidelity_holdings(ticker)
 
     if not full_df.empty:
-        if holdings_completeness(ticker, len(full_df)) == "partial":
-            return full_df, f"partial list: {len(full_df)} of ~{EXPECTED_HOLDINGS[ticker]} (Fidelity page cut off)"
+        if holdings_completeness(ticker, len(full_df)) != "partial":
+            label = "full basket" + (f", as of {asof}" if asof else "")
+            return full_df, label
 
-        label = "full basket" + (f", as of {asof}" if asof else "")
-        return full_df, label
+        if cut_off is None or len(full_df) > len(cut_off[0]):
+            cut_off = (full_df, f"partial list: {len(full_df)} of ~{EXPECTED_HOLDINGS[ticker]} (Fidelity page cut off)")
+
+    if cut_off is not None:
+        return cut_off
 
     def fetch():
         raw = yf.Ticker(ticker).funds_data.top_holdings
@@ -1092,22 +1433,48 @@ def _holdings_cached(ticker):
     return result, "top 10 only (Yahoo)"
 
 
+def is_single_stock(ticker):
+    """True for one company's own shares (NVDA), False for a fund. A fund is recognised from the
+    bundled holdings file, the fee table and the history table; after that Yahoo's own label decides.
+    If Yahoo does not answer, a ticker that sits inside the sector funds' baskets is a stock."""
+    ticker = str(ticker).strip().upper()
+
+    if not ticker or ticker in EXPENSE_RATIO or ticker in EXTEND_CHAIN or ticker in load_bundled_holdings():
+        return False
+
+    quote_type = str(get_info(ticker).get("quoteType") or "").upper()
+
+    if quote_type:
+        return quote_type == "EQUITY"
+
+    mapping = sector_map()
+    return ticker in mapping or ticker.replace("-", ".") in mapping
+
+
 def get_holdings(ticker):
     """
     Holdings with source label. Tries the full basket from Fidelity research first
-    (every position, any issuer), then falls back to Yahoo's top-10 list.
+    (every position, any issuer), then falls back to Yahoo's top-10 list. A single stock
+    is one holding at 100%, so stocks can be blended with funds.
     Returns (DataFrame[Symbol, Raw_Weight], source_label).
     """
-    ticker = ticker.strip().upper()
+    ticker = str(ticker).strip().upper()
     empty = pd.DataFrame(columns=["Symbol", "Raw_Weight"])
 
     if not ticker:
         return empty, "none"
 
-    try:
-        own_df, own_source = _holdings_cached(ticker)
-    except Exception:
+    if is_single_stock(ticker):
+        return pd.DataFrame({"Symbol": [ticker.replace("-", ".")], "Raw_Weight": [1.0]}), "single stock"
+
+    if _recently_failed("holdings:" + ticker):
         own_df, own_source = empty, "unavailable"
+    else:
+        try:
+            own_df, own_source = _holdings_cached(ticker)
+        except Exception:
+            _mark_failed("holdings:" + ticker)
+            own_df, own_source = empty, "unavailable"
 
     if own_source.startswith("full basket"):
         return own_df, own_source
@@ -1118,9 +1485,13 @@ def get_holdings(ticker):
         if kind != "fund":
             continue
 
+        if _recently_failed("holdings:" + symbol):
+            continue
+
         try:
             proxy_df, proxy_source = _holdings_cached(symbol)
         except Exception:
+            _mark_failed("holdings:" + symbol)
             continue
 
         if proxy_source.startswith("full basket") and not proxy_df.empty:
@@ -1129,17 +1500,170 @@ def get_holdings(ticker):
     return own_df, own_source
 
 
+# --- SECTORS (look-through: which part of the economy each underlying stock belongs to) ---
+# A stock's sector is read from which sector fund holds it. Sector funds are built on the standard
+# sector system the index companies use (GICS), so a stock inside Vanguard's technology fund is a
+# technology stock by definition. Vanguard's funds are read first, then Fidelity's, then State
+# Street's, because Vanguard's reach the most companies. The two chip funds at the end of the
+# technology list pick up foreign chip makers (Taiwan Semiconductor, ASML) that U.S. sector funds skip.
+SECTOR_FUNDS = {
+    "Technology": ["VGT", "FTEC", "XLK", "SMH", "SOXX"],
+    "Health Care": ["VHT", "FHLC", "XLV"],
+    "Financials": ["VFH", "FNCL", "XLF"],
+    "Consumer Discretionary": ["VCR", "FDIS", "XLY"],
+    "Communication Services": ["VOX", "FCOM", "XLC"],
+    "Industrials": ["VIS", "FIDU", "XLI"],
+    "Consumer Staples": ["VDC", "FSTA", "XLP"],
+    "Energy": ["VDE", "FENY", "XLE"],
+    "Utilities": ["VPU", "FUTY", "XLU"],
+    "Real Estate": ["VNQ", "FREL", "XLRE"],
+    "Materials": ["VAW", "FMAT", "XLB"],
+}
+
+# Well-known companies no U.S. sector fund holds, mostly because they are based abroad.
+SECTOR_MANUAL = {
+    "TSM": "Technology", "ASML": "Technology", "ARM": "Technology", "SHOP": "Technology",
+    "CRWV": "Technology", "SAP": "Technology",
+    "PDD": "Consumer Discretionary", "BABA": "Consumer Discretionary", "CPNG": "Consumer Discretionary",
+    "MELI": "Consumer Discretionary", "TM": "Consumer Discretionary",
+    "AZN": "Health Care", "NVO": "Health Care", "NVS": "Health Care",
+    "TRI": "Industrials", "FER": "Industrials", "RBA": "Industrials",
+    "CCEP": "Consumer Staples", "BRK.A": "Financials", "BRK.B": "Financials",
+    "VG": "Energy", "SPOT": "Communication Services",
+}
+
+# Yahoo's sector names, translated to the names used above (only for the few leftovers).
+YAHOO_SECTOR = {
+    "Technology": "Technology", "Healthcare": "Health Care", "Financial Services": "Financials",
+    "Consumer Cyclical": "Consumer Discretionary", "Consumer Defensive": "Consumer Staples",
+    "Communication Services": "Communication Services", "Industrials": "Industrials",
+    "Energy": "Energy", "Utilities": "Utilities", "Real Estate": "Real Estate",
+    "Basic Materials": "Materials",
+}
+
+CASH_LABEL = "Cash and other"
+UNCLASSIFIED = "Not classified"
+_CASH_SYMBOLS = {"XTSLA", "CASH", "USD", "CASH_USD", "USDOLLAR"}
+_MONEY_FUND_RE = re.compile(r"^[A-Z]{3}XX$")
+_FUTURES_RE = re.compile(r"^[A-Z0-9]{2,3}[FGHJKMNQUVXZ](2[5-9]|3[0-9])$")
+
+
+def is_cash_like(symbol):
+    """Money-market sweep funds (five letters ending in XX) and index futures (ESZ26) are a fund's
+    cash drawer, not stocks."""
+    symbol = str(symbol).strip().upper()
+    return symbol in _CASH_SYMBOLS or bool(_MONEY_FUND_RE.match(symbol)) or bool(_FUTURES_RE.match(symbol))
+
+
+@st.cache_resource(ttl=86400, show_spinner=False)
+def sector_map():
+    """{stock symbol: sector}, read from the sector funds' baskets in holdings_static.json.
+    Read-only: nothing in the app changes this dictionary."""
+    bundled = load_bundled_holdings()
+    mapping = {}
+    depth = max(len(funds) for funds in SECTOR_FUNDS.values())
+
+    for rank in range(depth):
+        for sector, funds in SECTOR_FUNDS.items():
+            if rank >= len(funds):
+                continue
+
+            for row in (bundled.get(funds[rank]) or {}).get("rows", []):
+                symbol = str(row[0]).strip().upper()
+
+                if symbol and not is_cash_like(symbol):
+                    mapping.setdefault(symbol, sector)
+
+    for symbol, sector in SECTOR_MANUAL.items():
+        mapping.setdefault(symbol, sector)
+
+    if "GOOGL" in mapping:
+        mapping.setdefault("GOOG", mapping["GOOGL"])
+
+    return mapping
+
+
+def sector_of(symbol, lookup=False):
+    """Sector for one stock symbol. With lookup=True, a symbol no sector fund holds is asked of Yahoo."""
+    symbol = str(symbol).strip().upper()
+
+    if is_cash_like(symbol):
+        return CASH_LABEL
+
+    mapping = sector_map()
+
+    if symbol in mapping:
+        return mapping[symbol]
+
+    dotted = symbol.replace("-", ".")
+
+    if dotted in mapping:
+        return mapping[dotted]
+
+    if lookup:
+        yahoo_name = str(get_info(symbol.replace(".", "-")).get("sector") or "")
+
+        if yahoo_name in YAHOO_SECTOR:
+            return YAHOO_SECTOR[yahoo_name]
+
+    return UNCLASSIFIED
+
+
+def assign_sectors(frame, lookups=8, min_weight=0.0005):
+    """Sector for every row of a holdings frame (columns Symbol and Weight, heaviest first). Up to
+    `lookups` of the heaviest names no sector fund holds are asked of Yahoo; the rest stay unlabelled."""
+    left = int(lookups)
+    sectors = []
+
+    for symbol, weight in zip(frame["Symbol"], frame["Weight"]):
+        sector = sector_of(symbol)
+
+        if sector == UNCLASSIFIED and left > 0 and weight >= min_weight:
+            left -= 1
+            sector = sector_of(symbol, lookup=True)
+
+        sectors.append(sector)
+
+    return sectors
+
+
+def sector_shares(frame):
+    """{sector: share} for a holdings frame that has Sector and Weight. What a fund keeps in cash,
+    futures or does not list is counted as 'Cash and other', so the shares add up to 100%."""
+    if frame is None or frame.empty:
+        return {}
+
+    total = float(frame["Weight"].sum())
+
+    if total <= 0:
+        return {}
+
+    base = max(total, 1.0)
+    shares = {sector: float(weight) / base for sector, weight in frame.groupby("Sector")["Weight"].sum().items()}
+    remainder = 1.0 - sum(shares.values())
+
+    if remainder > 0.00005:
+        shares[CASH_LABEL] = shares.get(CASH_LABEL, 0.0) + remainder
+
+    return shares
+
+
+def fund_sector_shares(ticker):
+    """Sector split of one fund (or one stock) on its own."""
+    df, _ = get_holdings(ticker)
+
+    if df.empty:
+        return {}
+
+    frame = merge_goog(df.rename(columns={"Raw_Weight": "Weight"})).reset_index(drop=True)
+    frame["Sector"] = assign_sectors(frame, lookups=0)
+    return sector_shares(frame)
+
+
 def get_stats_for_tickers(tickers):
-    data = []
-    failed = []
-
-    for ticker in tickers:
-        stats = get_full_stats(ticker)
-
-        if stats:
-            data.append(stats)
-        else:
-            failed.append(ticker)
+    stats = fresh_stats(tickers)
+    data = [stats[ticker] for ticker in tickers if ticker in stats]
+    failed = [ticker for ticker in tickers if ticker not in stats]
 
     if failed:
         st.warning(
@@ -1150,9 +1674,13 @@ def get_stats_for_tickers(tickers):
     return data
 
 
-def build_blended_holdings(etfs, weights):
+def build_blended_holdings(etfs, weights, sector_lookups=8):
+    """Every underlying position of the blend, heaviest first, with its sector, a plain-words industry
+    label, the company name where known and which of your funds hold it."""
+    columns = ["Symbol", "Weight", "Weight %", "Industry", "Sector", "Company", "In funds"]
     dfs = []
     source_counts = {}
+    held_by = {}
 
     for ticker in etfs:
         weight = weights.get(ticker, 0)
@@ -1161,36 +1689,41 @@ def build_blended_holdings(etfs, weights):
             continue
 
         df, source = get_holdings(ticker)
-        source_counts[ticker] = f"{len(df)} holdings ({source})"
+        source_counts[ticker] = "single stock" if source == "single stock" else f"{len(df)} holdings ({source})"
 
         if not df.empty:
             df = df.copy()
             df["Weight"] = df["Raw_Weight"] * weight
             dfs.append(df[["Symbol", "Weight"]])
 
+            for symbol in set(df["Symbol"].astype(str).str.strip().str.upper().replace({"GOOGL": "GOOG"})):
+                held_by.setdefault(symbol, []).append(ticker)
+
     if not dfs:
-        return pd.DataFrame(columns=["Symbol", "Weight", "Weight %", "Industry"]), source_counts
+        return pd.DataFrame(columns=columns), source_counts
 
-    full = merge_goog(pd.concat(dfs, ignore_index=True))
+    full = merge_goog(pd.concat(dfs, ignore_index=True)).reset_index(drop=True)
     full["Weight %"] = (full["Weight"] * 100).round(2)
-    full["Industry"] = full["Symbol"].apply(lambda x: IND_MAP.get(x, "Diversified / Other"))
+    full["Sector"] = assign_sectors(full, lookups=sector_lookups)
+    full["Industry"] = [IND_MAP.get(symbol) or sector for symbol, sector in zip(full["Symbol"], full["Sector"])]
+    full["Company"] = [NAME_MAP.get(symbol, symbol) for symbol in full["Symbol"]]
+    full["In funds"] = [", ".join(held_by.get(symbol, [])) for symbol in full["Symbol"]]
 
-    return full, source_counts
+    return full[columns], source_counts
 
 
-def calculate_blended_performance(weights):
-    stats_by_ticker = {}
+def calculate_blended_performance(weights, stats_by_ticker=None):
+    """Blended return for each period on the X-Ray tiles. Each figure is the weighted average of the
+    funds' total returns over that period (your percentages bought at the start and left alone);
+    multi-year figures are then turned into a per-year rate."""
+    if stats_by_ticker is None:
+        stats_by_ticker = fresh_stats([t for t, w in weights.items() if w > 0])
 
-    for ticker, weight in weights.items():
-        if weight <= 0:
-            continue
-
-        stats = get_full_stats(ticker)
-
-        if stats:
-            stats_by_ticker[ticker] = stats
+    stats_by_ticker = {t: s for t, s in stats_by_ticker.items() if weights.get(t, 0) > 0 and s}
 
     period_sources = {
+        "1D": ("1D", None),
+        "1W": ("1W", None),
         "1M": ("1M", None),
         "YTD": ("YTD", None),
         "1Y Total": ("1Y Total", None),
@@ -1625,6 +2158,363 @@ def build_growth_frame(tickers, years):
     return pd.concat(frames, ignore_index=True), start_used, skipped
 
 
+# --- BLEND ENGINE (the whole portfolio as one line: growth, worst drop, year by year) ---
+def fresh_close(ticker, stats=None):
+    """One ticker's index-extended price history with the newest price folded in. The long history
+    is cached for 6 hours; `stats` (from fresh_stats) carries the 15-minute price, which replaces
+    today's point or is added as a new last point. This keeps the chart, the yearly table and the
+    tiles on the same closing price."""
+    close = build_extended_close(ticker)[0]
+
+    if close.empty:
+        return close
+
+    close = close[~close.index.duplicated(keep="last")]
+    row = (stats or {}).get(ticker)
+
+    if not row:
+        return close
+
+    try:
+        stamp = pd.Timestamp(str(row["As of"]))
+        price = float(row["Price"])
+        last_day = close.index[-1].normalize()
+    except Exception:
+        return close
+
+    if not price > 0 or not 0.5 < price / float(close.iloc[-1]) < 2.0:
+        return close
+
+    if stamp > last_day:
+        return pd.concat([close, pd.Series([price], index=[stamp])])
+
+    if stamp == last_day:
+        close = close.copy()
+        close.iloc[-1] = price
+
+    return close
+
+
+def blend_series(weights, stats=None):
+    """(daily growth of the blend, the holding with the shortest record, the day that record starts).
+    The line starts at 1.0 on the first day every holding has data and is put back to the target
+    percentages at the end of each calendar year. Built on each holding's index-extended history.
+    An empty series means a holding had no price data."""
+    held = {t: float(w) for t, w in weights.items() if w and w > 0}
+    nothing = (pd.Series(dtype=float), None, None)
+
+    if not held:
+        return nothing
+
+    closes = {}
+
+    for ticker in held:
+        close = fresh_close(ticker, stats)
+
+        if close.empty:
+            return nothing
+
+        closes[ticker] = close
+
+    frame = pd.DataFrame(closes).sort_index().dropna()
+
+    if len(frame) < 30:
+        return nothing
+
+    target = pd.Series(held)
+    target = (target / target.sum())[list(frame.columns)]
+
+    pieces = []
+    value = 1.0
+    base = frame.iloc[0]
+
+    for _year, chunk in frame.groupby(frame.index.year):
+        growth = chunk.div(base, axis=1).mul(target, axis=1).sum(axis=1) * value
+        pieces.append(growth)
+        value = float(growth.iloc[-1])
+        base = chunk.iloc[-1]
+
+    limiting = max(closes, key=lambda ticker: closes[ticker].index[0])
+    return pd.concat(pieces), limiting, str(closes[limiting].index[0].date())
+
+
+def worst_drop(series):
+    """(deepest fall from a high, month the bottom was reached) for any price or growth series."""
+    if series is None or len(series) < 2:
+        return None, "-"
+
+    try:
+        drawdown = series / series.cummax() - 1
+        return float(drawdown.min()), str(drawdown.idxmin().date())[:7]
+    except Exception:
+        return None, "-"
+
+
+def calendar_year_returns(close):
+    """Total return for each calendar year, indexed by year. A year counts only when there is a
+    closing price from the year before, so a fund's first partial year is left out. The last entry
+    is the current year so far."""
+    if close is None or len(close) < 2:
+        return pd.Series(dtype=float)
+
+    year_end = close.groupby(close.index.year).last()
+    return (year_end / year_end.shift(1) - 1).dropna()
+
+
+def year_by_year(weights, extra_tickers, stats=None, max_years=12):
+    """Calendar-year returns, newest year first: MY BLEND (your percentages at the start of each
+    year), then each holding, then each extra ticker. Returns (text table, MY BLEND's full years as
+    numbers, the current year)."""
+    held = [t for t, w in weights.items() if w and w > 0]
+    order = held + [t for t in extra_tickers if t not in held]
+    columns = {}
+
+    for ticker in order:
+        returns = calendar_year_returns(fresh_close(ticker, stats))
+
+        if not returns.empty:
+            columns[ticker] = returns
+
+    if not columns:
+        return pd.DataFrame(), pd.Series(dtype=float), None
+
+    frame = pd.DataFrame(columns).sort_index()
+    current_year = int(frame.index.max())
+    have = [t for t in held if t in frame.columns]
+
+    if have and len(have) == len(held):
+        target = pd.Series({t: float(weights[t]) for t in have})
+        target = target / target.sum()
+        blend = frame[have].mul(target, axis=1).sum(axis=1, skipna=False)
+    else:
+        blend = pd.Series(float("nan"), index=frame.index)
+
+    frame.insert(0, "MY BLEND", blend)
+    shown = frame.tail(max_years).iloc[::-1]
+
+    table = pd.DataFrame({"Year": [f"{int(y)} so far" if int(y) == current_year else str(int(y)) for y in shown.index]})
+
+    for col in shown.columns:
+        table[col] = [f"{v:+.1%}" if pd.notnull(v) else "-" for v in shown[col]]
+
+    full_years = blend[blend.index < current_year].dropna()
+    return table, full_years, current_year
+
+
+def blend_growth_frame(weights, extra_tickers, years, stats=None):
+    """Growth of $10,000 for MY BLEND and each extra ticker, every line starting on the same day.
+    years=None means as far back as the blend goes. Returns (long frame for the chart, facts)."""
+    series, limiting, limit_date = blend_series(weights, stats)
+    facts = {
+        "start": None, "end": None, "limiting": limiting, "limit_date": limit_date, "shortened": False,
+        "skipped": [], "ends": {}, "left_alone": None, "years": None,
+    }
+
+    if series.empty:
+        return pd.DataFrame(), facts
+
+    cutoff = series.index[-1] - pd.DateOffset(years=years) if years else series.index[0]
+    window = series[series.index >= cutoff]
+
+    if len(window) < 10:
+        return pd.DataFrame(), facts
+
+    start, end = window.index[0], window.index[-1]
+    facts.update({
+        "start": start, "end": end,
+        "shortened": bool(years) and (start - cutoff).days > 45,
+        "years": (end - start).days / 365.25,
+    })
+
+    lines = {"MY BLEND": window}
+
+    for ticker in extra_tickers:
+        close = fresh_close(ticker, stats)
+
+        if close.empty:
+            continue
+
+        # A line that starts later than the others would begin at $10,000 on a later day and make
+        # the chart lie, so it is left off and named.
+        if close.index[0] > start + pd.Timedelta(days=10):
+            facts["skipped"].append(f"{ticker} (history starts {close.index[0].year})")
+            continue
+
+        cut = close[close.index >= start]
+
+        if len(cut) >= 10:
+            lines[ticker] = cut
+
+    frames = []
+
+    for name, line in lines.items():
+        growth = line / float(line.iloc[0]) * 10000
+        weekly = growth.resample("W").last().dropna()
+        points = pd.concat([growth.iloc[:1], weekly.iloc[:-1], growth.iloc[-1:]])
+        points = points[~points.index.duplicated(keep="last")].sort_index()
+        facts["ends"][name] = float(growth.iloc[-1])
+        frames.append(pd.DataFrame({"Date": points.index, "Growth of $10K": points.values, "Line": name}))
+
+    # The same money bought once at your percentages and never put back, for comparison.
+    left_alone = 0.0
+    total_weight = 0.0
+
+    for ticker, weight in weights.items():
+        if not weight or weight <= 0:
+            continue
+
+        close = fresh_close(ticker, stats)
+        cut = close[(close.index >= start) & (close.index <= end)]
+
+        if len(cut) >= 2 and float(cut.iloc[0]) > 0:
+            left_alone += weight * float(cut.iloc[-1]) / float(cut.iloc[0])
+            total_weight += weight
+
+    if total_weight > 0:
+        facts["left_alone"] = left_alone / total_weight * 10000
+
+    return pd.concat(frames, ignore_index=True), facts
+
+
+def blend_scorecard(held, weights, bench, stats, full, blended, excluded):
+    """One table, facts down the side, MY BLEND then each holding then each benchmark across the top.
+    Everything is text so the table renders the same on every screen."""
+    columns = ["MY BLEND"] + [t for t in held + bench if t in stats]
+    row_for_blend = weighted_portfolio_row([stats[t] for t in held if t in stats], weights, label="MY BLEND")
+    series, limiting, limit_date = blend_series({t: weights[t] for t in held if t in stats}, stats)
+    blend_dd, blend_dd_date = worst_drop(series)
+    holdings = {t: get_holdings(t) for t in columns[1:]}
+    details = {t: (dividend_detail(t) or {}) for t in columns[1:]}
+
+    def pct(value, signed=False):
+        if value is None or pd.isnull(value):
+            return "-"
+
+        return f"{value:+.2%}" if signed else f"{value:.2%}"
+
+    def each(fn, blend_value):
+        row = {"MY BLEND": blend_value}
+
+        for ticker in columns[1:]:
+            try:
+                row[ticker] = fn(ticker)
+            except Exception:
+                row[ticker] = "-"
+
+        return row
+
+    def perf_row(col, period):
+        mark = "*" if excluded.get(period) else ""
+        blend_value = pct(blended.get(period), signed=True)
+        return each(lambda t: pct(stats[t].get(col), signed=True), blend_value + (mark if blend_value != "-" else ""))
+
+    def top_share(ticker, count):
+        df, _ = holdings[ticker]
+
+        if df.empty:
+            return "-"
+
+        merged = merge_goog(df.rename(columns={"Raw_Weight": "Weight"}))
+        merged = merged[~merged["Symbol"].map(is_cash_like)]
+        return f"{merged.head(count)['Weight'].sum():.1%}"
+
+    def biggest_sector(shares):
+        real = {k: v for k, v in shares.items() if k not in (CASH_LABEL, UNCLASSIFIED)}
+
+        if not real:
+            return "-"
+
+        name = max(real, key=real.get)
+        return f"{name} {real[name]:.0%}"
+
+    def count_holdings(ticker):
+        df, source = holdings[ticker]
+
+        if df.empty:
+            return "-"
+
+        return "1 (a single stock)" if source == "single stock" else str(len(df))
+
+    def borrowed(ticker):
+        """' (QQQ's)' when a young fund is showing its same-index twin's payout record."""
+        source = details[ticker].get("source")
+        return f" ({source}'s)" if source and source != ticker else ""
+
+    def money(ticker, key):
+        value = details[ticker].get(key)
+        return f"${value:.4f}{borrowed(ticker)}" if value is not None else "-"
+
+    def payout_date(ticker):
+        value = details[ticker].get("last_date")
+        return f"{value}{borrowed(ticker)}" if value else "-"
+
+    def from_high(value):
+        if value is None or pd.isnull(value):
+            return "-"
+
+        return "at its high" if value > -0.0005 else f"{value:.1%}"
+
+    def qualified_share(ticker):
+        key, _how = tax_profile_key(ticker)
+        return TAX_PROFILES[key]["qualified_share"]
+
+    # The blend's own distance from its 52-week high and its 200-day trend, from the blend line.
+    blend_high, blend_trend = None, "-"
+
+    if len(series) >= 30:
+        blend_high = float(series.iloc[-1] / series.iloc[-252:].max() - 1)
+
+        if len(series) >= 200:
+            blend_trend = "Above" if float(series.iloc[-1]) >= float(series.iloc[-200:].mean()) else "Below"
+
+    # Share of the blend's dividends that is usually "qualified" (taxed at the lower rates).
+    paid = {t: weights[t] * (stats[t].get("Yield (TTM)") or 0) for t in held if t in stats}
+    blend_qualified = (
+        f"{sum(paid[t] * qualified_share(t) for t in paid) / sum(paid.values()):.0%}"
+        if sum(paid.values()) > 0 else "-"
+    )
+
+    stocks = full[full["Sector"] != CASH_LABEL] if not full.empty else full
+    blend_expense = row_for_blend.get("Expense")
+    rows = {}
+
+    rows["Share of my blend"] = each(lambda t: f"{weights[t]:.0%}" if t in held else "benchmark", "100%")
+    rows["Price"] = each(lambda t: f"${stats[t]['Price']:,.2f}", "-")
+    rows["1 day"] = perf_row("1D", "1D")
+    rows["1 week"] = perf_row("1W", "1W")
+    rows["1 month"] = perf_row("1M", "1M")
+    rows["From its 52-week high"] = each(lambda t: from_high(stats[t].get("vs 52W High")), from_high(blend_high))
+    rows["Versus its 200-day average"] = each(lambda t: str(stats[t].get("200DMA") or "-"), blend_trend)
+    rows["This year so far"] = perf_row("YTD", "YTD")
+    rows["1 year"] = perf_row("1Y Total", "1Y Total")
+
+    for years in (3, 5, 10, 15, 20):
+        rows[f"{years} years (per year)"] = perf_row(f"{years}Y CAGR", f"{years}Y CAGR")
+
+    rows["Cost per year"] = each(
+        lambda t: "no fund fee" if holdings[t][1] == "single stock" else fmt_expense(stats[t].get("Expense")),
+        fmt_expense(blend_expense),
+    )
+    rows["Dividend yield (last 12 months)"] = each(lambda t: pct(stats[t].get("Yield (TTM)")), pct(row_for_blend.get("Yield (TTM)")))
+    rows["Pays"] = each(lambda t: {"Qr": "Quarterly", "Mo": "Monthly", "Yr": "Yearly"}.get(stats[t].get("Freq"), "-"), "-")
+    rows["Last payout per share"] = each(lambda t: money(t, "last_amount"), "-")
+    rows["Last ex-dividend date"] = each(payout_date, "-")
+    rows["Payout growth, 5 yrs (per year)"] = each(lambda t: pct(stats[t].get("5Y Div CAGR")), pct(row_for_blend.get("5Y Div CAGR")))
+    rows["Years of rising payouts"] = each(lambda t: str(stats[t].get("Streak", "-")), "-")
+    rows["Usual qualified share of payouts"] = each(lambda t: f"{qualified_share(t):.0%}", blend_qualified)
+    rows["Worst drop on record"] = each(lambda t: pct(stats[t].get("Max DD")), pct(blend_dd))
+    rows["Bottom was hit"] = each(lambda t: str(stats[t].get("DD Date") or "-"), blend_dd_date)
+    rows["Record starts"] = each(lambda t: str(stats[t].get("Hist From") or "-"), str(series.index[0].date()) if not series.empty else "-")
+    rows["Number of holdings"] = each(count_holdings, str(len(stocks)) if not stocks.empty else "-")
+    rows["Top 10 share"] = each(lambda t: top_share(t, 10), f"{stocks.head(10)['Weight'].sum():.1%}" if not stocks.empty else "-")
+    rows["Biggest sector"] = each(lambda t: biggest_sector(fund_sector_shares(t)), biggest_sector(sector_shares(full)))
+    rows["Fund since"] = each(lambda t: str(stats[t].get("Inception") or "-"), "-")
+
+    table = pd.DataFrame(rows).T.astype(str)
+    table.index.name = "Fact"
+    return table.reset_index()[["Fact"] + columns]
+
+
 STATS_TABLE_COLS = (
     ["Ticker", "Price", "Industry", "Inception", "Hist From", "Streak", "Freq",
      "Expense", "Max DD", "DD Date"]
@@ -1811,7 +2701,8 @@ TAX_OVERRIDES = {
     "SPMO": "us_equity_index", "QNDX": "us_equity_index", "QQQ": "us_equity_index", "QQQM": "us_equity_index",
     "FTEC": "us_equity_index", "VGT": "us_equity_index", "SMH": "us_equity_index", "SOXX": "us_equity_index",
     "XLK": "us_equity_index", "IYW": "us_equity_index", "VOO": "us_equity_index", "SPY": "us_equity_index",
-    "IVV": "us_equity_index", "SPLG": "us_equity_index", "VTI": "us_equity_index", "ITOT": "us_equity_index",
+    "IVV": "us_equity_index", "SPLG": "us_equity_index", "SPYM": "us_equity_index",
+    "VTI": "us_equity_index", "ITOT": "us_equity_index",
     "SCHG": "us_equity_index", "VUG": "us_equity_index", "MGK": "us_equity_index", "IWF": "us_equity_index",
     "SCHD": "us_dividend_equity", "VYM": "us_dividend_equity", "VIG": "us_dividend_equity", "DGRO": "us_dividend_equity",
     "JEPQ": "covered_call", "JEPI": "covered_call", "QYLD": "covered_call", "XYLD": "covered_call",
@@ -1991,9 +2882,10 @@ def compare_sections(tickers):
     """Side-by-side tables (metrics as rows, funds as columns) plus computed one-line verdicts."""
     stats = {}
     holdings = {}
+    fresh = fresh_stats(tickers)
 
     for ticker in tickers:
-        s = get_full_stats(ticker)
+        s = fresh.get(ticker)
 
         if s:
             stats[ticker] = s
@@ -2156,9 +3048,9 @@ def compare_sections(tickers):
 
 # --- EXPECTED HOLDINGS COUNTS (to catch a cut-off list, e.g. 36 rows for a 100-stock fund) ---
 EXPECTED_HOLDINGS = {
-    "SPMO": 100, "QQQ": 101, "QQQM": 101, "QNDX": 101, "VGT": 320, "FTEC": 300, "SMH": 26,
-    "VOO": 500, "SPY": 500, "IVV": 500, "SPLG": 500, "VTI": 3500, "SCHG": 200, "VUG": 150,
-    "XLK": 70, "SOXX": 30, "IYW": 140, "MGK": 70, "MTUM": 125,
+    "SPMO": 100, "QQQ": 101, "QQQM": 101, "QNDX": 101, "VGT": 300, "FTEC": 290, "SMH": 26,
+    "VOO": 500, "SPY": 500, "IVV": 500, "SPLG": 500, "SPYM": 500, "VTI": 3500, "SCHG": 200, "VUG": 150,
+    "XLK": 70, "SOXX": 30, "IYW": 140, "MGK": 56, "MTUM": 125,
 }
 
 
@@ -2195,6 +3087,8 @@ SHORT_DESC = {
     "SCHG": "Dow Jones U.S. Large-Cap Growth",
     "VUG": "CRSP US Large Cap Growth",
     "XLK": "S&P 500 technology sector",
+    "MGK": "CRSP US Mega Cap Growth: the biggest U.S. growth companies, Vanguard, 0.05%",
+    "SPYM": "S&P 500 Index, State Street, 0.02% (used to trade as SPLG)",
 }
 
 
@@ -2616,8 +3510,10 @@ def data_health(tickers, deep=False):
         except Exception:
             pass
 
+    asof_dates = [d for d in asof_dates if pd.notnull(d)]
+
     if asof_dates:
-        oldest = min(d for d in asof_dates if pd.notnull(d))
+        oldest = min(asof_dates)
         age = (today - oldest.normalize()).days
         checks.append(("Holdings snapshot age", "OK" if age <= 45 else "Check",
                         f"Oldest fund list is as of {oldest.date()} ({age} days). Fidelity publishes monthly; the Monday job picks it up."))
@@ -2630,6 +3526,8 @@ def data_health(tickers, deep=False):
 
         if df.empty:
             checks.append((f"{ticker} holdings", "Problem", "No holdings loaded. Press 'Clear all cached data'."))
+        elif source == "single stock":
+            checks.append((f"{ticker} holdings", "OK", "A single stock, counted as one holding at 100%."))
         elif "stand-in" in source:
             checks.append((f"{ticker} holdings", "Check", f"{count} rows, {source}. Fine until the fund publishes its own list."))
         elif completeness == "partial" or "top 10" in source or "partial" in source:
@@ -2653,7 +3551,21 @@ def data_health(tickers, deep=False):
                 checks.append((f"{ticker} history", "OK", f"Usable history from {stats['Hist From']}."))
 
             if stats.get("Expense") is None:
-                checks.append((f"{ticker} expense ratio", "Check", "Unknown. Ask Claude to add the verified figure."))
+                checks.append((f"{ticker} expense ratio", "Check", "Unknown right now. It is looked up again every 10 minutes; if it stays blank, ask Claude to add the verified figure."))
+
+    # 3b. Sector labels for the blend
+    try:
+        blend, _ = build_blended_holdings(tickers, current_weights(tickers), sector_lookups=0)
+
+        if not blend.empty and float(blend["Weight"].sum()) > 0:
+            unlabelled = float(blend.loc[blend["Sector"] == UNCLASSIFIED, "Weight"].sum()) / float(blend["Weight"].sum())
+            checks.append((
+                "Sector labels", "OK" if unlabelled <= 0.02 else "Check",
+                f"{1 - unlabelled:.1%} of the blend is labelled straight from the sector funds' baskets "
+                f"({len(sector_map()):,} stocks on file). The X-Ray asks Yahoo about the heaviest of the rest."
+            ))
+    except Exception:
+        pass
 
     # 4. Shows feeds
     try:
@@ -2675,10 +3587,24 @@ def data_health(tickers, deep=False):
         checks.append(("BAH rate tables (Military tab)", "Check",
                         "Not uploaded yet, so the ZIP lookup is off and BAH must be typed. See the tracker document for the 2-minute upload."))
 
-    # 6. Hand-entered facts and their verification date
-    checks.append(("Fixed facts (verified " + STATIC_FACTS_VERIFIED + ")", "OK",
-                    "Expense ratios, tax rules (2026), military pay tables (2026), BAS, TSP limit, VA rates (Dec 2025 COLA). "
-                    "Due for a re-check every January and whenever a fund changes; ask Claude."))
+    # 6. Hand-entered facts and the day each set was last checked. These flip to "Check" on their own
+    #    once they are due, so an old figure cannot sit here looking fine.
+    fees_age = (today - pd.to_datetime(FEES_VERIFIED)).days
+    checks.append((
+        "Fund fees (checked " + FEES_VERIFIED + ")", "OK" if fees_age <= 365 else "Check",
+        "QNDX 0.10%, VGT 0.09%, SPMO 0.13%, QQQ 0.18%, FTEC 0.084%, MGK 0.05%, SPYM 0.02%, VOO 0.03%. "
+        "SMH, QQQM and VTI were last checked Sep 5, 2026. Any other fund's fee comes from Yahoo."
+        + (" More than a year old; ask Claude to re-check." if fees_age > 365 else "")
+    ))
+
+    verified = pd.to_datetime(STATIC_FACTS_VERIFIED)
+    yearly_due = today.year > verified.year and (today.month, today.day) >= (1, 15)
+    checks.append((
+        "Tax, pay and VA tables (verified " + STATIC_FACTS_VERIFIED + ")", "Check" if yearly_due else "OK",
+        f"These are {verified.year} figures and the {today.year} ones are out. Ask Claude to update them."
+        if yearly_due else
+        "Tax rules, military pay tables, BAS, the TSP limit and VA rates for 2026. Due for a re-check every January; ask Claude."
+    ))
 
     return checks
 
@@ -3121,6 +4047,509 @@ def show_chart(fig):
         st.plotly_chart(fig, use_container_width=True)
 
 
+def _supports(fn, *names):
+    """True when this Streamlit version's function accepts every named option."""
+    try:
+        params = inspect.signature(fn).parameters
+        return all(name in params for name in names)
+    except Exception:
+        return False
+
+
+_FLEX_TILES = _supports(st.container, "horizontal") and _supports(st.metric, "width", "border")
+
+
+def metric_grid(items, per_row=5):
+    """One group of number tiles. On a computer they sit side by side. On a phone they wrap two to a
+    line instead of stacking one per line, which halves the scrolling. Older Streamlit versions fall
+    back to plain columns, per_row to a line. Each item is (label, value, help text or None)."""
+    if _FLEX_TILES:
+        with st.container(horizontal=True):
+            for label, value, help_text in items:
+                st.metric(label, value, help=help_text, border=True, width=TILE_WIDTH)
+
+        return
+
+    for first in range(0, len(items), per_row):
+        cols = st.columns(per_row)
+
+        for col, (label, value, help_text) in zip(cols, items[first:first + per_row]):
+            col.metric(label, value, help=help_text)
+
+
+def full_height(rows, row_px=35, cap=None):
+    """Table height in pixels that shows every row without an inner scroll bar."""
+    height = int(row_px * (rows + 1) + 3)
+    return min(height, cap) if cap else height
+
+
+def render_xray_results(etfs, weights, bench, portfolio_value):
+    """Everything about the blend on one page: performance, costs, sectors, top holdings, a
+    scorecard against each fund and the benchmarks, growth, year-by-year returns, overlap and headlines."""
+    held = [t for t in etfs if weights.get(t, 0) > 0]
+    bench = [t for t in bench if t not in held]
+    value = float(portfolio_value or 0)
+    mix_text = ", ".join(f"{t} {weights[t]:.0%}" for t in held)
+
+    with st.spinner("Loading prices and history for your blend. The first load of the day takes the longest."):
+        stats = fresh_stats(held + bench)
+
+    missing = [t for t in held if t not in stats]
+
+    if missing:
+        st.warning(
+            f"No usable market data for: {', '.join(missing)}. This is usually temporary Yahoo "
+            "rate-limiting - wait about a minute and press the button again. Until then the blend "
+            "below is worked out from the rest."
+            + (" For a share class, Yahoo wants a dash instead of a dot: BRK-B, not BRK.B."
+               if any("." in t for t in missing) else "")
+        )
+
+    if not any(t in stats for t in held):
+        return
+
+    # ---------- 1. Performance ----------
+    md(
+        "Jump to: [Sectors](#sectors) · [Top 15](#top-15) · [All positions](#all-positions) · "
+        "[Scorecard](#scorecard) · [Growth](#growth) · [Year by year](#year-by-year) · "
+        "[Overlap](#overlap) · [Headlines](#headlines)"
+    )
+    st.subheader("📈 Blended Performance", anchor="performance")
+    blended, excluded = calculate_blended_performance(weights, stats)
+    tiles = [(PERF_LABELS[p], pct_or_na(blended.get(p)), PERF_HELP[p]) for p in PERF_PERIODS]
+    metric_grid(tiles[:4], per_row=4)     # the recent moves: day, week, month, this year
+    metric_grid(tiles[4:], per_row=6)     # the long view: 1 year, then 3 to 20 years per year
+
+    dates = sorted({str(stats[t].get("As of")) for t in held if t in stats and stats[t].get("As of")})
+    as_of_text = f"Prices as of {dates[-1]}" if dates else "Prices from Yahoo"
+
+    if len(dates) > 1:
+        lagging = [t for t in held if t in stats and str(stats[t].get("As of")) != dates[-1]]
+        as_of_text += f" ({', '.join(lagging)} last priced earlier)"
+
+    cap(
+        f"{mix_text}. {as_of_text}, refreshed every 15 minutes while the market is open. "
+        "\"/ yr\" is the average growth per year over that stretch. Long stretches use index-extended "
+        "history (older funds and indexes on the same index, spliced in before each fund existed)."
+    )
+
+    notes = [f"{PERF_LABELS[period]} leaves out {', '.join(names)}" for period, names in excluded.items() if names]
+
+    if notes:
+        cap(
+            "Where a fund is younger than the stretch it is left out and the figure is re-weighted "
+            "across the rest: " + "; ".join(notes) + "."
+        )
+
+    # ---------- 2. Holdings behind the blend (needed by several sections) ----------
+    with st.spinner("Opening each fund and adding up what is inside..."):
+        full, source_counts = build_blended_holdings(etfs, weights)
+
+    stocks = full[full["Sector"] != CASH_LABEL].reset_index(drop=True) if not full.empty else full
+
+    # ---------- 3. At a glance ----------
+    st.subheader("🧾 At a glance", anchor="at-a-glance")
+    blend_row = weighted_portfolio_row([stats[t] for t in held if t in stats], weights, label="MY BLEND")
+    blend_expense = blend_row.get("Expense")
+    blend_yield = blend_row.get("Yield (TTM)")
+    tiles = [
+        ("Cost per year", fmt_expense(blend_expense), "The yearly fund fee on the whole blend, weighted by your percentages."),
+        ("Dividend yield", pct_or_na(blend_yield), "Cash paid out over the last 12 months as a share of today's price, weighted by your percentages."),
+    ]
+
+    if not stocks.empty:
+        top = stocks.iloc[0]
+        tiles += [
+            ("Stocks held", f"{len(stocks):,}", "How many different companies you own once the funds are opened up."),
+            (f"Biggest: {top['Symbol']}", f"{top['Weight']:.2%}", "Your largest single company and its share of the blend."),
+            ("Top 10 share", f"{stocks.head(10)['Weight'].sum():.2%}", "Your 10 largest companies added together."),
+            ("Top 15 share", f"{stocks.head(15)['Weight'].sum():.2%}", "Your 15 largest companies added together."),
+        ]
+
+    metric_grid(tiles, per_row=6)
+
+    fee_bits = [f"{t} {fmt_expense(stats[t].get('Expense'))}" for t in held if t in stats and stats[t].get("Expense") is not None]
+    fee_missing = [t for t in held if t in stats and stats[t].get("Expense") is None]
+    basis = value if value > 0 else 10000.0
+    money_bits = []
+
+    if blend_expense is not None and pd.notnull(blend_expense):
+        money_bits.append(f"about ${basis * blend_expense:,.0f} a year in fund fees")
+
+    if blend_yield is not None and pd.notnull(blend_yield):
+        money_bits.append(f"about ${basis * blend_yield:,.0f} a year in dividends")
+
+    line = "Fees by fund: " + " | ".join(fee_bits) + "." if fee_bits else ""
+
+    if fee_missing:
+        line += f" No fee on file for {', '.join(fee_missing)}, so the blended cost leaves it out."
+
+    if money_bits:
+        line += f" On ${basis:,.0f}: " + " and ".join(money_bits) + "."
+
+    young = [t for t in held if t in stats and "yield/streak/freq via" in str(stats[t].get("Hist Notes", ""))]
+
+    if young:
+        line += (
+            f" {', '.join(young)} is under a year old, so its yield uses the payouts of the older fund "
+            "on the same index."
+        )
+
+    if value > 0:
+        taxable_pct = float(st.session_state.get("tax_taxable_pct", 50))
+        rates = tax_rates(
+            st.session_state.get("tax_bracket", 22),
+            bool(st.session_state.get("tax_niit", False)),
+            float(st.session_state.get("tax_state", 0.0) or 0.0),
+        )
+        _rows, _payout, tax_total = blended_tax_estimate(held, weights, value, taxable_pct / 100, rates)
+        line += (
+            f" Estimated tax on those dividends: about ${tax_total:,.0f} a year, with {taxable_pct:.0f}% of the money "
+            f"in a taxable account at {rates['qualified']:.0%} on qualified dividends (change both on the Taxes tab)."
+        )
+
+    if line:
+        cap(line.strip())
+
+    if full.empty:
+        st.warning("Could not load holdings data for the selected tickers.")
+        cap(
+            "Both holdings sources are unreachable right now. Wait about a minute and press the button "
+            "again - results are kept once loaded. Sectors and top holdings need this list."
+        )
+    else:
+        # ---------- 4. Sectors ----------
+        st.subheader("🧩 Sectors", anchor="sectors")
+        shares = sector_shares(full)
+        others = {t: fund_sector_shares(t) for t in held + bench}
+        real = sorted((s for s in shares if s not in (CASH_LABEL, UNCLASSIFIED)), key=lambda s: -shares[s])
+        tail = [s for s in (UNCLASSIFIED, CASH_LABEL) if shares.get(s, 0) > 0.00005]
+        seen = set(real) | set(tail)
+        extra = sorted({s for split in others.values() for s in split if s not in seen and split[s] > 0.00005
+                        and s not in (CASH_LABEL, UNCLASSIFIED)})
+        order = real + extra + tail
+
+        sector_rows = []
+
+        for sector in order:
+            row = {"Sector": sector, "MY BLEND": f"{shares.get(sector, 0):.2%}"}
+
+            if value > 0:
+                row["$ of mine"] = f"${shares.get(sector, 0) * value:,.0f}"
+
+            for ticker in held + bench:
+                row[ticker] = f"{others[ticker].get(sector, 0):.2%}" if others[ticker] else "-"
+
+            sector_rows.append(row)
+
+        total_row = {"Sector": "Total", "MY BLEND": f"{sum(shares.values()):.2%}"}
+
+        if value > 0:
+            total_row["$ of mine"] = f"${value:,.0f}"
+
+        for ticker in held + bench:
+            total_row[ticker] = f"{sum(others[ticker].values()):.2%}" if others[ticker] else "-"
+
+        sector_rows.append(total_row)
+        sector_df = pd.DataFrame(sector_rows)
+
+        if real:
+            lead = real[0]
+            md(
+                f"**{lead}** is **{shares[lead]:.1%}** of your blend. "
+                + (f"The next two are {real[1]} at {shares[real[1]]:.1%} and {real[2]} at {shares[real[2]]:.1%}."
+                   if len(real) >= 3 else "")
+            )
+
+        s1, s2 = st.columns([1, 1])
+
+        with s1:
+            st.dataframe(sector_df, hide_index=True, height=full_height(len(sector_df)))
+
+        with s2:
+            chart_df = pd.DataFrame({
+                "Sector": order,
+                "Share of my blend (%)": [round(shares.get(s, 0) * 100, 2) for s in order],
+            })
+            fig = px.bar(
+                chart_df.iloc[::-1], x="Share of my blend (%)", y="Sector", orientation="h",
+                text="Share of my blend (%)", title="My blend by sector",
+            )
+            fig.update_traces(texttemplate="%{x:.1f}%", textposition="outside", cliponaxis=False)
+            fig.update_layout(
+                height=max(320, 34 * len(chart_df) + 110), margin=dict(l=10, r=40, t=50, b=10),
+                yaxis_title=None, xaxis_title=None,
+            )
+            show_chart(fig)
+
+        unlabelled = shares.get(UNCLASSIFIED, 0)
+        cap(
+            "Worked out stock by stock from each fund's published holdings, then added up with your "
+            "percentages. The other columns show each fund and each benchmark on its own, so you can see "
+            "what each one adds. Sector names follow the standard system the index companies use, so a "
+            "line can differ by a hair from Seeking Alpha. \"Cash and other\" is what a fund keeps in cash "
+            "or does not list."
+            + (f" {unlabelled:.2%} of the blend has no sector label (companies no U.S. sector fund holds)."
+               if unlabelled > 0.00005 else "")
+        )
+
+        # ---------- 5. Top 15 holdings ----------
+        st.subheader("🏆 Top 15 holdings", anchor="top-15")
+        top15 = stocks.head(15)
+        top10_share = stocks.head(10)["Weight"].sum()
+        top15_share = top15["Weight"].sum()
+        top25_share = stocks.head(25)["Weight"].sum()
+
+        md(
+            f"Your 15 largest holdings are **{top15_share:.2%}** of the blend. "
+            f"The top 10 are {top10_share:.2%} and the top 25 are {top25_share:.2%}."
+        )
+
+        top_rows = []
+
+        for rank, row in enumerate(top15.to_dict("records"), start=1):
+            entry = {"#": str(rank), "Symbol": row["Symbol"], "Weight %": f"{row['Weight']:.2%}"}
+
+            if value > 0:
+                entry["$ of mine"] = f"${row['Weight'] * value:,.0f}"
+
+            entry.update({"Company": row["Company"], "Sector": row["Sector"], "Held through": row["In funds"]})
+            top_rows.append(entry)
+
+        total_entry = {"#": "", "Symbol": "Total", "Weight %": f"{top15_share:.2%}"}
+
+        if value > 0:
+            total_entry["$ of mine"] = f"${top15_share * value:,.0f}"
+
+        total_entry.update({"Company": f"Top {len(top15)} together", "Sector": "", "Held through": ""})
+        top_rows.append(total_entry)
+        st.dataframe(pd.DataFrame(top_rows), hide_index=True, height=full_height(len(top_rows)))
+        cap(
+            "Each stock's weight is added up across every fund that holds it. Alphabet's two share "
+            "classes (GOOG and GOOGL) are counted together as one company, so this list can differ "
+            "from one that shows them on two lines."
+        )
+
+        # ---------- 6. All positions ----------
+        st.subheader("🗺️ All positions", anchor="all-positions")
+        n_unique, n_two, n_all = holdings_overlap(held)
+        overlap_text = (
+            f" {n_two} of them sit in two or more of your funds and {n_all} sit in all {len(held)}."
+            if len(held) > 1 else ""
+        )
+        cap(
+            f"All {len(stocks):,} companies in the blend, weighted by your percentages." + overlap_text
+            + " Sources - " + " | ".join(f"{ticker}: {info}" for ticker, info in source_counts.items())
+        )
+
+        table = full[["Symbol", "Weight %"]].copy()
+
+        if value > 0:
+            table["$ Exposure"] = (full["Weight"] * value).apply(lambda x: f"${x:,.0f}")
+
+        table["Sector"] = full["Sector"]
+        table["Industry"] = full["Industry"]
+
+        c1, c2 = st.columns([2, 1])
+
+        with c1:
+            fig = px.treemap(
+                stocks.head(40),
+                path=[px.Constant("My blend"), "Sector", "Symbol"],
+                values="Weight %",
+                custom_data=["Industry"],
+                title="Top 40 holdings, grouped by sector",
+            )
+            fig.update_traces(
+                textinfo="label+value",
+                texttemplate="%{label}<br>%{value:.2f}%",
+                hovertemplate="%{label}<br>%{customdata[0]}<br>%{value:.2f}% of the blend<extra></extra>",
+            )
+            fig.update_layout(margin=dict(l=5, r=5, t=45, b=5))
+            show_chart(fig)
+
+        with c2:
+            st.dataframe(table, height=500, hide_index=True)
+
+        try:
+            st.download_button(
+                "⬇️ Download the full list (CSV)",
+                data=full[["Symbol", "Company", "Sector", "Industry", "Weight %", "In funds"]].to_csv(index=False),
+                file_name="blended_holdings.csv",
+                mime="text/csv",
+                key="xray_download",
+            )
+        except Exception:
+            pass
+
+    # ---------- 7. Scorecard ----------
+    st.subheader("📊 Scorecard vs. benchmarks", anchor="scorecard")
+    scorecard = blend_scorecard(held, weights, bench, stats, full, blended, excluded)
+    st.dataframe(scorecard, hide_index=True, height=full_height(len(scorecard)))
+    starred = sorted({name for names in excluded.values() for name in names})
+    cap(
+        "Facts run down the side; your blend, then each fund, then each benchmark run across. "
+        "Swipe sideways on a phone. "
+        + (f"* = {', '.join(starred)} is younger than that stretch, so the blend figure leaves it out and "
+           "re-weights the rest. " if starred else "")
+        + "The blend's worst drop is measured on the blend itself over the years every fund has data; "
+        "each fund's own column reaches back further through its index. \"Qualified\" payouts are the "
+        "dividends taxed at the lower long-term rates; the Taxes tab has the detail."
+    )
+
+    # ---------- 8. Growth of $10,000 ----------
+    st.subheader("💰 Growth of $10,000", anchor="growth")
+    g1, g2, g3 = st.columns([1, 1, 1])
+
+    with g1:
+        window_choice = st.selectbox(
+            "How far back:", ["3Y", "5Y", "10Y", "15Y", "20Y", "As far back as the blend goes"],
+            index=2, key="xray_window",
+        )
+
+    with g2:
+        show_funds = st.checkbox("Draw each of my funds too", value=False, key="xray_show_funds")
+
+    with g3:
+        log_scale = st.checkbox("Log scale (fairer over long stretches)", value=False, key="xray_log")
+
+    years_map = {"3Y": 3, "5Y": 5, "10Y": 10, "15Y": 15, "20Y": 20, "As far back as the blend goes": None}
+    blend_weights = {t: weights[t] for t in held if t in stats}
+    extra_lines = bench + ([t for t in held if t in stats] if show_funds and len(held) > 1 else [])
+    growth_df, facts = blend_growth_frame(blend_weights, extra_lines, years_map[window_choice], stats)
+
+    if growth_df.empty:
+        st.info("Not enough shared price history to draw the blend as one line yet.")
+    else:
+        fig = px.line(
+            growth_df, x="Date", y="Growth of $10K", color="Line",
+            title=f"Growth of $10,000 from {facts['start'].date()} to {facts['end'].date()}",
+        )
+        fig.update_traces(line=dict(width=1.6))
+        fig.update_traces(selector=dict(name="MY BLEND"), line=dict(width=3.2))
+        fig.update_layout(legend_title_text=None, margin=dict(l=10, r=10, t=50, b=10), yaxis_title=None, xaxis_title=None)
+
+        if log_scale:
+            fig.update_yaxes(type="log")
+
+        show_chart(fig)
+
+        span = facts["years"] or 0
+        end_value = facts["ends"].get("MY BLEND")
+        blend_series_full, _limit, _limit_date = blend_series(blend_weights, stats)
+        dd_value, dd_month = worst_drop(blend_series_full)
+        growth_tiles = [("$10,000 became", f"${end_value:,.0f}", "MY BLEND over the stretch drawn above.")]
+
+        if span >= 1 and end_value and end_value > 0:
+            growth_tiles.append((
+                "Per year", f"{(end_value / 10000) ** (1 / span) - 1:.2%}",
+                "The steady yearly rate that turns $10,000 into that amount.",
+            ))
+
+        for name in bench:
+            if name in facts["ends"]:
+                growth_tiles.append((f"{name} became", f"${facts['ends'][name]:,.0f}", f"$10,000 in {name} over the same stretch."))
+
+        if dd_value is not None:
+            growth_tiles.append((
+                "Worst drop", f"{dd_value:.1%}",
+                f"The blend's deepest fall from a high, measured since {blend_series_full.index[0].date()}.",
+            ))
+            growth_tiles.append(("Bottom reached", dd_month, "The month that worst drop hit its low."))
+
+        metric_grid(growth_tiles, per_row=6)
+
+        text = (
+            "MY BLEND is one line for the whole portfolio: your percentages, put back to target at the end of "
+            "each calendar year, with dividends reinvested."
+        )
+
+        if facts.get("left_alone"):
+            text += (
+                f" Bought once and never put back, the same $10,000 would be ${facts['left_alone']:,.0f}. "
+                "That bought-once method is what the tiles at the top use, which is why the two can differ a little."
+            )
+
+        if facts["shortened"] and facts.get("limiting"):
+            text += (
+                f" The chart starts on {facts['start'].date()} instead of going back the full {window_choice[:-1]} years "
+                f"because {facts['limiting']} has no history before {facts['limit_date']}."
+            )
+
+        if dd_value is not None:
+            text += f" The worst drop is measured from {blend_series_full.index[0].date()}; the bottom came in {dd_month}."
+
+        text += " Dollar values are of their own time, not adjusted to today's dollars."
+        cap(text)
+
+        if facts["skipped"]:
+            cap("Left off the chart because their history starts after the chart does: " + ", ".join(facts["skipped"]) + ".")
+
+    # ---------- 9. Year by year ----------
+    st.subheader("📅 Year by year", anchor="year-by-year")
+    year_table, full_years, current_year = year_by_year(blend_weights, bench, stats)
+
+    if year_table.empty:
+        st.info("Yearly returns are not available right now.")
+    else:
+        if len(full_years) >= 2:
+            best, worst = full_years.idxmax(), full_years.idxmin()
+            up_years = int((full_years > 0).sum())
+            md(
+                f"In the {len(full_years)} full years every fund has data, your blend's best year was "
+                f"**{int(best)} ({full_years[best]:+.1%})**, its worst was **{int(worst)} ({full_years[worst]:+.1%})**, "
+                f"and it finished up in {up_years} of {len(full_years)}."
+            )
+
+        st.dataframe(year_table, hide_index=True, height=full_height(len(year_table)))
+        cap(
+            "Total return for each calendar year, dividends included. MY BLEND is your percentages at the start "
+            "of each year. A dash means a fund was not around for that whole year, so the blend cannot be "
+            "worked out for it. Fund columns before a fund existed use its index's older history."
+        )
+
+    # ---------- 10. Overlap ----------
+    if len(held) > 1:
+        st.subheader("🔁 How much my funds overlap", anchor="overlap")
+        pairs = []
+
+        for i, a in enumerate(held):
+            for b in held[i + 1:]:
+                share = holdings_overlap_pct(get_holdings(a)[0], get_holdings(b)[0])
+
+                if share is not None:
+                    pairs.append({"Pair": f"{a} and {b}", "Same stocks by weight": f"{share:.0%}"})
+
+        if pairs:
+            st.dataframe(pd.DataFrame(pairs), hide_index=True)
+            cap(
+                "Stock by stock, this adds up the smaller of the two funds' weights. 100% would mean two "
+                "identical funds and 0% would mean nothing in common. High overlap is why funds move together."
+            )
+
+    # ---------- 11. Headlines ----------
+    st.subheader("🗞️ Latest headlines", anchor="headlines")
+
+    with st.expander("Show the newest headlines for these tickers"):
+        try:
+            news_df, news_time = get_live_news(tuple(held))
+        except Exception:
+            news_df, news_time = pd.DataFrame(), None
+
+        if news_df is None or news_df.empty:
+            cap("No headlines came back right now. The Insights & Updates tab has a Refresh button.")
+        else:
+            for _, item in news_df.head(8).iterrows():
+                meta = " · ".join(x for x in [item["Ticker"], str(item["Source"]), relative_age(item["Time"])] if x)
+
+                if item["Link"]:
+                    md(f"**[{item['Title']}]({item['Link']})**  \n{meta}")
+                else:
+                    md(f"**{item['Title']}**  \n{meta}")
+
+            cap("Yahoo Finance and Google News, refreshed every 15 minutes. The full feed is on the Insights & Updates tab.")
+
+
 # --- UI ---
 def main():
     render_health(parse_tickers(st.session_state.get("xray_tickers", DEFAULT_PORT)) or parse_tickers(DEFAULT_PORT))
@@ -3138,14 +4567,19 @@ def main():
         "🎧 Shows & Voices",
     ])
 
-    # --- TAB 1: X-RAY ---
+    # --- TAB 1: X-RAY (everything about the blend on one page) ---
     with tab1:
         st.header("Portfolio X-Ray")
+        cap(
+            "Type the funds and stocks to blend, set each percentage, then press the button. Everything "
+            "about the blend shows on this one page: performance, cost, sectors, top holdings, a scorecard "
+            "against the benchmarks, growth, yearly returns, overlap and headlines."
+        )
 
-        etfs = parse_tickers(st.text_input("ETFs to Blend:", DEFAULT_PORT, key="xray_tickers"))
+        etfs = parse_tickers(st.text_input("ETFs and stocks to blend:", DEFAULT_PORT, key="xray_tickers"))
 
         if not etfs:
-            st.info("Enter at least one ETF ticker.")
+            st.info("Enter at least one ticker.")
         else:
             cols = st.columns(len(etfs))
             raw_weights = {}
@@ -3158,7 +4592,7 @@ def main():
                         min_value=0,
                         max_value=100,
                         value=int(DEFAULT_WEIGHTS.get(ticker, default_weight)),
-                        step=5,
+                        step=1,
                         key=f"weight_{ticker}"
                     ) / 100.0
 
@@ -3171,114 +4605,29 @@ def main():
                     cap(f"Percentages sum to {total_w * 100:.0f}% - normalized to 100% for the math below.")
             else:
                 weights = raw_weights
-                st.warning("Set at least one ETF weight above 0.")
+                st.warning("Set at least one weight above 0.")
 
-            portfolio_value = st.number_input(
-                "Portfolio value in $ (optional - adds a dollars-per-stock column):",
-                min_value=0,
-                value=0,
-                step=1000,
-                key="xray_value"
-            )
+            b1, b2 = st.columns(2)
 
-            if st.button("Analyze Blended Holdings", key="analyze_blended"):
+            with b1:
+                bench = parse_tickers(
+                    st.text_input("Compare against (benchmarks):", DEFAULT_BENCH, key="xray_bench")
+                )
+
+            with b2:
+                portfolio_value = st.number_input(
+                    "Portfolio value in $ (optional - adds dollar figures):",
+                    min_value=0,
+                    value=0,
+                    step=1000,
+                    key="xray_value"
+                )
+
+            if st.button("Analyze Blended Holdings", key="analyze_blended", type="primary"):
                 st.session_state["xray_go"] = True
 
             if st.session_state.get("xray_go") and total_w > 0:
-                st.subheader("📈 Blended Performance")
-                cap(
-                    "Long-period figures use index-extended history (older same-index funds / "
-                    "indexes spliced in before each ETF's inception)."
-                )
-
-                blended_stats, excluded = calculate_blended_performance(weights)
-                metric_cols = st.columns(len(PERF_PERIODS))
-
-                for i, period in enumerate(PERF_PERIODS):
-                    metric_cols[i].metric(period, pct_or_na(blended_stats.get(period)))
-
-                notes = []
-
-                for period, missing in excluded.items():
-                    if missing:
-                        notes.append(f"{period} excludes {', '.join(missing)}")
-
-                if notes:
-                    cap(
-                        "Where a fund is younger than the window it is left out and the figure is "
-                        "re-weighted across the rest: " + "; ".join(notes) + "."
-                    )
-
-                expense_bits = []
-                blended_expense = 0.0
-                expense_weight = 0.0
-
-                for ticker, weight in weights.items():
-                    ratio = get_expense_ratio(ticker)
-
-                    if ratio is not None:
-                        blended_expense += ratio * weight
-                        expense_weight += weight
-                        expense_bits.append(f"{ticker} {fmt_expense(ratio)}")
-
-                if expense_weight > 0:
-                    cap(
-                        f"Blended expense ratio: **{blended_expense / expense_weight:.2%}** per year "
-                        f"({' | '.join(expense_bits)})."
-                    )
-
-                md("---")
-
-                full, source_counts = build_blended_holdings(etfs, weights)
-
-                if full.empty:
-                    st.warning("Could not load holdings data for the selected ETFs.")
-                    cap(
-                        "Both holdings sources are unreachable right now. "
-                        "Wait ~1 minute and press the button again - results are cached once loaded."
-                    )
-                else:
-                    n_unique, n_two, n_all = holdings_overlap(etfs)
-                    top10_weight = full.head(10)["Weight"].sum()
-
-                    overlap_text = (
-                        f" {n_two} stocks sit in two or more of your funds and {n_all} sit in all {len(etfs)}."
-                        if len(etfs) > 1 else ""
-                    )
-                    cap(
-                        f"Showing all {len(full)} blended underlying positions, weighted by your percentages. "
-                        f"Top 10 stocks = {top10_weight:.1%} of the portfolio." + overlap_text
-                    )
-                    cap(
-                        "Sources - "
-                        + " | ".join(f"{ticker}: {info}" for ticker, info in source_counts.items())
-                    )
-
-                    table = full[["Symbol", "Industry", "Weight %"]].copy()
-
-                    if portfolio_value and portfolio_value > 0:
-                        table["$ Exposure"] = (full["Weight"] * float(portfolio_value)).apply(
-                            lambda x: f"${x:,.0f}"
-                        )
-
-                    c1, c2 = st.columns([2, 1])
-
-                    with c1:
-                        fig = px.treemap(
-                            full.head(40),
-                            path=[px.Constant("Portfolio"), "Symbol"],
-                            values="Weight %",
-                            custom_data=["Industry"],
-                            title="Top Holdings"
-                        )
-                        fig.update_traces(
-                            textinfo="label+value",
-                            texttemplate="%{label}<br>%{customdata[0]}<br>%{value:.2f}%"
-                        )
-                        show_chart(fig)
-
-                    with c2:
-                        st.dataframe(table, height=500, hide_index=True)
+                render_xray_results(etfs, weights, bench[:4], portfolio_value)
 
     # --- TAB 2: BENCHMARK ---
     with tab2:
@@ -3435,8 +4784,10 @@ def main():
             if not deep_tickers:
                 st.info("Enter at least one ETF ticker.")
             else:
+                deep_stats = fresh_stats(deep_tickers)
+
                 for ticker in deep_tickers:
-                    stats = get_full_stats(ticker)
+                    stats = deep_stats.get(ticker)
                     hist_from = stats.get("Hist From", "N/A") if stats else "N/A"
                     inception = stats.get("Inception", "N/A") if stats else B_INCEPT.get(ticker, "N/A")
 
@@ -3488,15 +4839,17 @@ def main():
                             "unreachable right now - wait ~1 minute and press the button again."
                         )
                     else:
-                        display_df = merge_goog(df.rename(columns={"Raw_Weight": "Weight"}))
+                        display_df = merge_goog(df.rename(columns={"Raw_Weight": "Weight"})).reset_index(drop=True)
                         display_df["Weight %"] = (display_df["Weight"] * 100).round(2)
-                        display_df["Industry"] = display_df["Symbol"].apply(
-                            lambda x: IND_MAP.get(x, "Diversified / Other")
-                        )
+                        display_df["Sector"] = assign_sectors(display_df, lookups=0)
+                        display_df["Industry"] = [
+                            IND_MAP.get(symbol) or sector
+                            for symbol, sector in zip(display_df["Symbol"], display_df["Sector"])
+                        ]
 
                         cap(f"{len(display_df)} holdings - source: {holdings_source}.")
                         st.dataframe(
-                            display_df[["Symbol", "Industry", "Weight %"]],
+                            display_df[["Symbol", "Sector", "Industry", "Weight %"]],
                             height=400,
                             hide_index=True
                         )
@@ -3542,7 +4895,7 @@ def main():
         st.header("⚖️ Compare funds side by side")
         cap(
             "Type two to four tickers. Metrics run down the page in plain words, funds run across, "
-            "so it reads well on a phone. Your portfolio's four are the default; try QNDX, QQQ to see twins."
+            "so it reads well on a phone. Your portfolio's funds are the default; try QNDX, QQQ to see twins."
         )
 
         cmp_tickers = parse_tickers(st.text_input("Tickers to compare:", DEFAULT_PORT, key="cmp_tickers"))
@@ -3796,12 +5149,14 @@ def main():
             if st.button("🔄 Refresh now", key="refresh_insights"):
                 get_live_news.clear()
                 get_pulse.clear()
+                _failure_log().clear()
                 st.rerun()
 
         with top_m:
             if st.button("🧹 Clear all cached data", key="clear_all_cache",
                          help="Use this if a number looks stuck or wrong. Everything reloads fresh (about a minute)."):
                 st.cache_data.clear()
+                st.cache_resource.clear()
                 st.rerun()
 
         if not insight_tickers:
@@ -3886,7 +5241,7 @@ def main():
             md("### 🧠 Portfolio Read (computed live)")
 
             read_weights = current_weights(insight_tickers)
-            core_holdings, _counts = build_blended_holdings(insight_tickers, read_weights)
+            core_holdings, _counts = build_blended_holdings(insight_tickers, read_weights, sector_lookups=0)
 
             if not core_holdings.empty:
                 top1 = core_holdings.iloc[0]
@@ -3914,7 +5269,7 @@ def main():
                 )
 
                 st.dataframe(
-                    core_holdings[["Symbol", "Industry", "Weight %"]].head(10),
+                    core_holdings[["Symbol", "Sector", "Industry", "Weight %"]].head(10),
                     hide_index=True
                 )
             else:
@@ -3937,8 +5292,8 @@ def main():
             prompt_text = (
                 f"Today is {today_str}. Give me a comprehensive news and analysis update on my "
                 f"portfolio: {', '.join(pulse_bits) if pulse_bits else ', '.join(insight_tickers)}, "
-                f"weighted {mix_text}. Cover: (1) this week's key news per holding, (2) semiconductor, "
-                "tech and momentum-factor dynamics, (3) macro factors (rates, AI capex) affecting these "
+                f"weighted {mix_text}. Cover: (1) this week's key news per holding, (2) Nasdaq-100, "
+                "technology-sector and momentum-factor dynamics, (3) macro factors (rates, AI capex) affecting these "
                 "funds, and (4) anything a long-term buy-and-hold investor should monitor. Cite recent sources."
             )
 
@@ -4008,7 +5363,8 @@ def main():
     cap(
         f"Master Portfolio v{APP_VERSION}. Data: Yahoo Finance via yfinance (free, ~15-min delayed quotes). "
         "Prices cached 15 min, full history 6h, holdings 12h, shows 30 min. Long-period returns use "
-        "index-extended history - see Hist Notes."
+        "index-extended history - see Hist Notes. "
+        f"Running on Streamlit {st.__version__}, pandas {pd.__version__}, yfinance {getattr(yf, '__version__', '?')}."
     )
 
 
